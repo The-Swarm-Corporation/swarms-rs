@@ -1,7 +1,3 @@
-Here's a draft for your `README.md` for the `swarms-rs` repository:
-
----
-
 # swarms-rs
 
 **The Enterprise-Grade, Production-Ready Multi-Agent Orchestration Framework in Rust**
