@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let base_url = env::var("DEEPSEEK_BASE_URL").unwrap();
+    let base_url = env::var("DEEPSEEK_BASE_URL").unwrap_or("https://api.deepseek.com".to_string());
     let api_key = env::var("DEEPSEEK_API_KEY").unwrap();
     let client = OpenAI::from_url(base_url, api_key).set_model("deepseek-chat");
     let agent = client
