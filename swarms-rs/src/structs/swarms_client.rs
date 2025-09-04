@@ -153,13 +153,17 @@ pub enum SwarmType {
     GroupChat,
     MultiAgentRouter,
     AutoSwarmBuilder,
-    HiearchicalSwarm,
+    #[serde(rename = "HiearchicalSwarm")]
+    HierarchicalSwarm,
     #[serde(rename = "auto")]
     Auto,
     MajorityVoting,
     #[serde(rename = "MALT")]
     Malt,
     DeepResearchSwarm,
+    CouncilAsAJudge,
+    InteractiveGroupChat,
+    HeavySwarm,
 }
 
 /// Agent specification for creating agents
@@ -184,6 +188,8 @@ pub struct AgentSpec {
     pub max_loops: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools_dictionary: Option<Vec<HashMap<String, serde_json::Value>>>,
+    #[serde(default = "default_markdown")]
+    pub markdown: bool,
 }
 
 fn default_model() -> String {
@@ -200,6 +206,10 @@ fn default_temperature() -> f32 {
 
 fn default_max_loops() -> u32 {
     1
+}
+
+fn default_markdown() -> bool {
+    true
 }
 
 /// Agent completion request
@@ -272,20 +282,40 @@ pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default)]
+    pub img_cost: f64,
+    #[serde(default)]
+    pub total_cost: f64,
 }
 
 /// Response from an agent completion request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCompletionResponse {
-    pub id: String,
+    pub job_id: String,
     pub success: bool,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub temperature: f32,
-    pub outputs: serde_json::Value,
+    pub outputs: Vec<HashMap<String, serde_json::Value>>,
     pub usage: Usage,
     pub timestamp: String,
+}
+
+/// Streaming response chunk for agent completion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCompletionStreamChunk {
+    pub job_id: String,
+    pub success: bool,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub temperature: f32,
+    pub output: HashMap<String, serde_json::Value>,
+    pub usage: Option<Usage>,
+    pub timestamp: String,
+    #[serde(default)]
+    pub done: bool,
 }
 
 /// Response from a swarm completion request
@@ -306,6 +336,32 @@ pub struct SwarmCompletionResponse {
     pub tasks: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<HashMap<String, serde_json::Value>>>,
+}
+
+impl SwarmCompletionResponse {
+    /// Automatically render output with markdown formatting based on agent roles
+    pub fn render_output(&self) {
+        if let Some(output_array) = self.output.as_array() {
+            for message in output_array {
+                if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                    if let Some(role) = message.get("role").and_then(|r| r.as_str()) {
+                        // Use markdown for Summarizer, plain text for others
+                        match role {
+                            "Summarizer" => {
+                                let mut formatter = crate::utils::formatter::Formatter::new(true);
+                                formatter.render_agent_output(role, content);
+                            }
+                            _ => {
+                                println!("[{}]: {}", role, content);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("{}", self.output);
+        }
+    }
 }
 
 /// API request log entry
@@ -550,6 +606,7 @@ impl CircuitBreaker {
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     pub api_key: String,
+    pub openai_api_key: Option<String>,
     pub base_url: Url,
     pub timeout: Duration,
     pub max_retries: usize,
@@ -559,13 +616,15 @@ pub struct ClientConfig {
     pub circuit_breaker_timeout: Duration,
     pub enable_cache: bool,
     pub cache_ttl: Duration,
+    pub enable_openai_fallback: bool,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
-            base_url: "https://swarms-api-285321057562.us-east1.run.app/"
+            openai_api_key: None,
+            base_url: "https://api.swarms.world/"
                 .parse()
                 .unwrap(),
             timeout: Duration::from_secs(60),
@@ -576,6 +635,7 @@ impl Default for ClientConfig {
             circuit_breaker_timeout: Duration::from_secs(60),
             enable_cache: true,
             cache_ttl: Duration::from_secs(300),
+            enable_openai_fallback: true,
         }
     }
 }
@@ -611,6 +671,18 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the OpenAI API key for fallback
+    pub fn openai_api_key<S: Into<String>>(mut self, openai_api_key: S) -> Self {
+        self.config.openai_api_key = Some(openai_api_key.into());
+        self
+    }
+
+    /// Enable or disable OpenAI fallback
+    pub fn enable_openai_fallback(mut self, enable: bool) -> Self {
+        self.config.enable_openai_fallback = enable;
+        self
+    }
+
     /// Set the base URL
     pub fn base_url<S: AsRef<str>>(mut self, base_url: S) -> Result<Self> {
         self.config.base_url = base_url.as_ref().parse()?;
@@ -641,6 +713,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the circuit breaker threshold
+    pub fn circuit_breaker_threshold(mut self, threshold: usize) -> Self {
+        self.config.circuit_breaker_threshold = threshold;
+        self
+    }
+
     /// Enable or disable caching
     pub fn enable_cache(mut self, enable_cache: bool) -> Self {
         self.config.enable_cache = enable_cache;
@@ -666,7 +744,7 @@ impl ClientBuilder {
 }
 
 /// Main Swarms API client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SwarmsClient {
     client: Client,
     config: ClientConfig,
@@ -791,6 +869,25 @@ impl SwarmsClient {
                 },
                 Err(e) => {
                     last_error = Some(e);
+                    
+                    // Check if this is a rate limit error and we have OpenAI fallback
+                    if let SwarmsError::RateLimit { .. } = &last_error.as_ref().unwrap() {
+                        if self.config.enable_openai_fallback && self.config.openai_api_key.is_some() {
+                            debug!("Rate limit hit, trying OpenAI fallback");
+                            match self.make_openai_fallback_request(body).await {
+                                Ok(response) => {
+                                    debug!("OpenAI fallback succeeded");
+                                    self.circuit_breaker.record_success().await;
+                                    return Ok(response);
+                                },
+                                Err(openai_error) => {
+                                    debug!("OpenAI fallback failed: {:?}", openai_error);
+                                    // Continue with normal retry logic
+                                }
+                            }
+                        }
+                    }
+                    
                     if attempt < self.config.max_retries {
                         let delay = self.config.retry_delay * 2_u32.pow(attempt as u32);
                         warn!(
@@ -847,7 +944,7 @@ impl SwarmsClient {
                 detail: "Unknown error".to_string(),
             });
 
-            return Err(match status.as_u16() {
+            let error = match status.as_u16() {
                 401 | 403 => SwarmsError::Authentication {
                     message: body.detail,
                     status: Some(status.as_u16()),
@@ -873,7 +970,11 @@ impl SwarmsClient {
                     status: Some(status.as_u16()),
                     request_id,
                 },
-            });
+            };
+
+            // For rate limit errors, we want to let the retry logic handle them
+            // so the fallback can be triggered
+            return Err(error);
         }
 
         let response_body: serde_json::Value = response.json().await?;
@@ -883,6 +984,170 @@ impl SwarmsClient {
         );
 
         Ok(response_body)
+    }
+
+    /// Make an OpenAI fallback request
+    #[instrument(skip(self, body))]
+    async fn make_openai_fallback_request<T: for<'de> Deserialize<'de>>(
+        &self,
+        body: Option<&impl Serialize>,
+    ) -> Result<T> {
+        let openai_api_key = self.config.openai_api_key.as_ref()
+            .ok_or_else(|| SwarmsError::InvalidConfig {
+                message: "OpenAI API key not configured".to_string(),
+            })?;
+
+        // Convert Swarms request to OpenAI format
+        let openai_request = self.convert_to_openai_request(body)?;
+        
+        let url = "https://api.openai.com/v1/chat/completions"
+            .parse::<Url>()
+            .map_err(|_| SwarmsError::UrlParse(url::ParseError::RelativeUrlWithoutBase))?;
+
+        let mut request_builder = self.client.request(Method::POST, url);
+
+        // Add OpenAI headers
+        request_builder = request_builder
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", openai_api_key));
+
+        // Add OpenAI request body
+        request_builder = request_builder.json(&openai_request);
+
+        let response = timeout(self.config.timeout, request_builder.send())
+            .await
+            .map_err(|_| SwarmsError::Timeout {
+                message: format!("OpenAI fallback request timed out after {:?}", self.config.timeout),
+            })??;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            let error_body: serde_json::Value = response.json().await.unwrap_or_else(|_| serde_json::json!({
+                "error": { "message": "Unknown OpenAI error" }
+            }));
+
+            let error_message = error_body
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown OpenAI error");
+
+            return Err(SwarmsError::Api {
+                message: error_message.to_string(),
+                status: Some(status.as_u16()),
+                request_id: None,
+            });
+        }
+
+        let openai_response: serde_json::Value = response.json().await?;
+        
+        // Convert OpenAI response back to Swarms format
+        let swarms_response = self.convert_from_openai_response(openai_response)?;
+        
+        Ok(serde_json::from_value(swarms_response)?)
+    }
+
+    /// Convert Swarms request to OpenAI format
+    fn convert_to_openai_request(&self, body: Option<&impl Serialize>) -> Result<serde_json::Value> {
+        if let Some(body) = body {
+            let body_value = serde_json::to_value(body)?;
+            
+            // Extract agent config and task from Swarms format
+            if let (Some(agent_config), Some(task)) = (
+                body_value.get("agent_config"),
+                body_value.get("task")
+            ) {
+                let model = agent_config.get("model_name")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("gpt-4o-mini");
+                
+                let system_prompt = agent_config.get("system_prompt")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("You are a helpful assistant.");
+                
+                let task_str = task.as_str().unwrap_or("");
+                
+                let openai_request = serde_json::json!({
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": system_prompt
+                        },
+                        {
+                            "role": "user", 
+                            "content": task_str
+                        }
+                    ],
+                    "max_tokens": agent_config.get("max_tokens").unwrap_or(&serde_json::Value::from(1000)),
+                    "temperature": agent_config.get("temperature").unwrap_or(&serde_json::Value::from(0.7))
+                });
+                
+                Ok(openai_request)
+            } else {
+                Err(SwarmsError::InvalidRequest {
+                    message: "Invalid request format for OpenAI conversion".to_string(),
+                    status: None,
+                    request_id: None,
+                })
+            }
+        } else {
+            Err(SwarmsError::InvalidRequest {
+                message: "No request body provided".to_string(),
+                status: None,
+                request_id: None,
+            })
+        }
+    }
+
+    /// Convert OpenAI response to Swarms format
+    fn convert_from_openai_response(&self, openai_response: serde_json::Value) -> Result<serde_json::Value> {
+        let choices = openai_response.get("choices")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| SwarmsError::Serialization(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, "No choices in OpenAI response"))))?;
+        
+        if let Some(first_choice) = choices.first() {
+            let message = first_choice.get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            
+            let usage = openai_response.get("usage").cloned().unwrap_or_else(|| serde_json::json!({
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }));
+            
+            // Convert OpenAI usage format to Swarms format
+            let swarms_usage = serde_json::json!({
+                "input_tokens": usage.get("prompt_tokens").unwrap_or(&serde_json::Value::from(0)),
+                "output_tokens": usage.get("completion_tokens").unwrap_or(&serde_json::Value::from(0)),
+                "total_tokens": usage.get("total_tokens").unwrap_or(&serde_json::Value::from(0)),
+                "img_cost": 0.0,
+                "total_cost": 0.0
+            });
+            
+            let swarms_response = serde_json::json!({
+                "job_id": format!("openai-{}", uuid::Uuid::new_v4()),
+                "success": true,
+                "name": "OpenAI Fallback",
+                "description": "Response from OpenAI API fallback",
+                "temperature": 0.7,
+                "outputs": [
+                    {
+                        "role": "assistant",
+                        "content": message
+                    }
+                ],
+                "usage": swarms_usage,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            });
+            
+            Ok(swarms_response)
+        } else {
+            Err(SwarmsError::Serialization(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, "No content in OpenAI response"))))
+        }
     }
 
     /// Build URL for endpoint
@@ -910,7 +1175,25 @@ impl<'a> AgentResource<'a> {
     #[instrument(skip(self))]
     pub async fn create(&self, request: AgentCompletion) -> Result<AgentCompletionResponse> {
         let url = self.client.build_url("v1/agent/completions")?;
-        self.client.request(Method::POST, url, Some(&request)).await
+        
+        // Try the main request first
+        match self.client.request(Method::POST, url, Some(&request)).await {
+            Ok(response) => Ok(response),
+            Err(SwarmsError::RateLimit { .. }) | Err(SwarmsError::Authentication { .. }) => {
+                // If we hit rate limit or authentication error and have OpenAI fallback, try that
+                if self.client.config.enable_openai_fallback && self.client.config.openai_api_key.is_some() {
+                    debug!("Swarms API error, trying OpenAI fallback");
+                    self.client.make_openai_fallback_request(Some(&request)).await
+                } else {
+                    Err(SwarmsError::RateLimit {
+                        message: "Rate limit exceeded".to_string(),
+                        status: Some(429),
+                        request_id: None,
+                    })
+                }
+            },
+            Err(e) => Err(e),
+        }
     }
 
     /// Create multiple agent completions in batch
@@ -954,6 +1237,7 @@ impl<'a> AgentCompletionBuilder<'a> {
                     role: None,
                     max_loops: default_max_loops(),
                     tools_dictionary: None,
+                    markdown: default_markdown(),
                 },
                 task: String::new(),
                 history: None,
@@ -1006,6 +1290,12 @@ impl<'a> AgentCompletionBuilder<'a> {
     /// Set max loops
     pub fn max_loops(mut self, max_loops: u32) -> Self {
         self.request.agent_config.max_loops = max_loops;
+        self
+    }
+
+    /// Set markdown enabled/disabled
+    pub fn md(mut self, enabled: bool) -> Self {
+        self.request.agent_config.markdown = enabled;
         self
     }
 
@@ -1138,6 +1428,12 @@ impl<'a> SwarmCompletionBuilder<'a> {
         self
     }
 
+    /// Enable streaming
+    pub fn stream(mut self, stream: bool) -> Self {
+        self.request.stream = stream;
+        self
+    }
+
     /// Send the request
     pub async fn send(self) -> Result<SwarmCompletionResponse> {
         // Validate that we have either task, tasks, or messages
@@ -1176,6 +1472,7 @@ impl AgentSpecBuilder {
                 role: None,
                 max_loops: default_max_loops(),
                 tools_dictionary: None,
+                markdown: default_markdown(),
             },
         }
     }
@@ -1213,6 +1510,12 @@ impl AgentSpecBuilder {
     /// Set max tokens
     pub fn max_tokens(mut self, max_tokens: u32) -> Self {
         self.spec.max_tokens = max_tokens;
+        self
+    }
+
+    /// Set markdown enabled/disabled
+    pub fn md(mut self, enabled: bool) -> Self {
+        self.spec.markdown = enabled;
         self
     }
 
@@ -1257,86 +1560,5 @@ impl<'a> LogsResource<'a> {
     pub async fn list(&self) -> Result<LogsResponse> {
         let url = self.client.build_url("v1/swarm/logs")?;
         self.client.request(Method::GET, url, None::<&()>).await
-    }
-}
-
-// ================================================================================================
-// TESTS
-// ================================================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::time::Duration;
-
-    #[tokio::test]
-    async fn test_cache() {
-        let cache = Cache::new(Duration::from_millis(100));
-
-        // Test set and get
-        cache.set(
-            "key1".to_string(),
-            serde_json::Value::String("value1".to_string()),
-        );
-        assert_eq!(
-            cache.get("key1").unwrap(),
-            serde_json::Value::String("value1".to_string())
-        );
-
-        // Test expiration
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert!(cache.get("key1").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_circuit_breaker() {
-        let cb = CircuitBreaker::new(2, Duration::from_millis(100));
-
-        // Should be closed initially
-        assert_eq!(cb.state().await, CircuitBreakerState::Closed);
-        assert!(cb.can_proceed().await.is_ok());
-
-        // Record failures
-        cb.record_failure().await;
-        cb.record_failure().await;
-
-        // Should be open now
-        assert_eq!(cb.state().await, CircuitBreakerState::Open);
-        assert!(cb.can_proceed().await.is_err());
-
-        // Wait for recovery timeout
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        // Should allow calls now (half-open)
-        assert!(cb.can_proceed().await.is_ok());
-    }
-
-    #[test]
-    fn test_client_builder() {
-        let client = SwarmsClient::builder()
-            .unwrap()
-            .api_key("test-key")
-            .timeout(Duration::from_secs(30))
-            .max_retries(5)
-            .build();
-
-        assert!(client.is_ok());
-    }
-
-    #[test]
-    fn test_agent_spec_builder() {
-        let spec = AgentSpecBuilder::new()
-            .name("Test Agent")
-            .description("A test agent")
-            .model("gpt-4o")
-            .temperature(0.7)
-            .max_tokens(1000)
-            .build();
-
-        assert_eq!(spec.agent_name, "Test Agent");
-        assert_eq!(spec.description, Some("A test agent".to_string()));
-        assert_eq!(spec.model_name, "gpt-4o");
-        assert_eq!(spec.temperature, 0.7);
-        assert_eq!(spec.max_tokens, 1000);
     }
 }

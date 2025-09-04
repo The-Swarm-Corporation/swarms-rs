@@ -6,7 +6,7 @@ use std::{
 
 use chrono::Local;
 use thiserror::Error;
-use twox_hash::XxHash3_64;
+use twox_hash::XxHash64;
 use uuid::Uuid;
 
 use crate::structs::{
@@ -111,7 +111,7 @@ impl SequentialWorkflow {
             timestamp: Local::now(),
         };
 
-        let mut hasher = XxHash3_64::default();
+        let mut hasher = XxHash64::default();
         task.hash(&mut hasher);
         let task_hash = hasher.finish();
         let metadata_path_dir = Path::new(&self.metadata_output_dir);

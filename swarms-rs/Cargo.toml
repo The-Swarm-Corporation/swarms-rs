@@ -12,43 +12,57 @@ keywords = ["ai", "agents", "swarms", "multi-agent", "llm"]
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-dashmap = { version = "6", features = ["serde"] }
+dashmap = { version = "5", features = ["serde"] }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 erased-serde = "0.4"
 futures = "0.3"
-uuid = { version = "1.15", features = ["v4", "serde"] }
-url = "2.5"
-tokio-rustls = "0.26.2"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+url = "2.0"
+tokio-rustls = "0.24"
 tokio = { version = "1", features = ["full"] }
-thiserror = "2"
+thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-twox-hash = "2.1"
-zstd = "0.13.3"
+twox-hash = "1"
+zstd = "0.12"
 dotenv = "0.15"
 log = "0.4"
-env_logger = "0.11"
-colored = "3.0.0"
-petgraph = { version = "0.7", default-features = false, features = [
+env_logger = "0.10"
+colored = "2.0"
+clap = { version = "4.0", features = ["derive"] }
+console = "0.15"
+tui = { version = "0.19", features = ["crossterm"] }
+crossterm = "0.27"
+indicatif = "0.17"
+petgraph = { version = "0.6", default-features = false, features = [
     "stable_graph",
 ] }
-reqwest = { version = "0.12", features = [
+reqwest = { version = "0.11", features = [
     "json",
     "stream",
     "multipart",
     "rustls-tls-native-roots",
 ], default-features = false }
-async-openai = { version = "0.28", features = ["byot"] }
-rmcp = { version = "0.1.5", features = [
-    "client",
-    "transport-sse",
-    "transport-child-process",
-] }
+async-openai = { version = "0.16" }
+anyhow = "1"
+async-trait = "0.1"
+
+# rmcp = { version = "0.1.4", features = [
+#     "client",
+#     "transport-sse",
+#     "transport-child-process",
+# ] }
+lazy_static = "1.4"
+dirs = "5.0"
 
 # macro
 swarms-macro = { version = "0.1.0", path = "../swarms-macro" }
+
+[[bin]]
+name = "swarms-cli"
+path = "src/bin/swarms_cli.rs"
 
 [dev-dependencies]
 anyhow = "1"
@@ -58,7 +72,6 @@ tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mockall = "0.13"
 criterion = { version = "0.5", features = ["html_reports"] }
-ctor = "0.2"
 
 [[bench]]
 name = "concurrent_workflow_benchmarks"
@@ -68,22 +81,98 @@ harness = false
 name = "graph_workflow_benchmarks"
 harness = false
 
-[[bench]]
-name = "agent_initialization_benchmarks"
-harness = false
-
-[[example]]
-name = "basic_usage"
-path = "examples/api_client_examples/basic_usage.rs"
-
-[[example]]
-name = "batch_operations"
-path = "examples/api_client_examples/batch_operations.rs"
-
-[[example]]
-name = "error_handling"
-path = "examples/api_client_examples/error_handling.rs"
-
 [[example]]
 name = "logging_example"
 path = "examples/logging_example.rs"
+
+[[example]]
+name = "cli_example"
+path = "examples/cli_example.rs"
+
+[[example]]
+name = "minimal_md_agent"
+path = "examples/minimal_md_agent.rs"
+
+[[example]]
+name = "hierarchical_swarm_example"
+path = "examples/hierarchical_swarm_example.rs"
+
+[[example]]
+name = "md_agent"
+path = "examples/md_agent.rs"
+
+[[example]]
+name = "memory_vs_parallel_example"
+path = "examples/memory_vs_parallel_example.rs"
+
+[[example]]
+name = "formatter_test_agent"
+path = "examples/formatter_test_agent.rs"
+
+[[example]]
+name = "enhanced_formatter_demo"
+path = "examples/enhanced_formatter_demo.rs"
+
+[[example]]
+name = "streaming_formatter_example"
+path = "examples/streaming_formatter_example.rs"
+
+[[example]]
+name = "concurrent_workflow_run"
+path = "examples/concurrent_workflow_run.rs"
+
+[[example]]
+name = "sequential_workflow"
+path = "examples/sequential_workflow.rs"
+
+[[example]]
+name = "test_openai_fallback"
+path = "examples/test_openai_fallback.rs"
+
+[[example]]
+name = "simple_working_example"
+path = "examples/simple_working_example.rs"
+
+[[example]]
+name = "working_swarm_example"
+path = "examples/working_swarm_example.rs"
+
+[[example]]
+name = "agent_rearrange_example"
+path = "examples/agent_rearrange_example.rs"
+
+[[example]]
+name = "batch_executor_example"
+path = "examples/batch_executor_example.rs"
+
+[[example]]
+name = "concurrent_workflow_run_batch"
+path = "examples/concurrent_workflow_run_batch.rs"
+
+[[example]]
+name = "financial_analysis_swarm"
+path = "examples/financial_analysis_swarm.rs"
+
+[[example]]
+name = "graph_workflow"
+path = "examples/graph_workflow.rs"
+
+[[example]]
+name = "mcp_tool"
+path = "examples/mcp_tool.rs"
+
+[[example]]
+name = "simple_agent"
+path = "examples/simple_agent.rs"
+
+[[example]]
+name = "swarm_router"
+path = "examples/swarm_router.rs"
+
+[[example]]
+name = "test_concurrent"
+path = "examples/test_concurrent.rs"
+
+[[example]]
+name = "tool"
+path = "examples/tool.rs"

@@ -5,6 +5,7 @@ pub mod llm;
 pub mod logging;
 pub mod prompts;
 pub mod structs;
+pub mod utils;
 pub use swarms_macro;
 
 // Re-export commonly used traits and types
