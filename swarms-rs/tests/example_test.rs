@@ -1,5 +1,9 @@
 use anyhow::Result;
 use swarms_rs::{llm::provider::openai::OpenAI, structs::agent::Agent};
+use swarms_rs::agent::SwarmsAgentBuilder;
+use swarms_rs::llm::request::ToolDefinition;
+use swarms_rs::agent::SwarmsAgent;
+
 
 #[tokio::test]
 async fn test_basic_agent_functionality() -> Result<()> {
@@ -65,4 +69,31 @@ async fn test_agent_creation() -> Result<()> {
     let agent = create_mock_agent();
     assert_eq!(agent.name(), "MockAgent");
     Ok(())
+}
+
+#[tokio::test]
+async fn test_lazy_initialized_for_SwarmsAgentBuilder() {
+    let mut builder = SwarmsAgentBuilder::new_with_model(OpenAI::new("mock-api-key".to_string()));
+
+    // Initially, tools_impl should not be initialized
+    assert!(
+        builder.tools_impl().is_empty(),
+        "tools_impl should be empty before first access"
+    );
+
+    {
+        // First borrow
+        let tools_map = builder.tools_impl();
+        assert!(
+            tools_map.is_empty(),
+            "tools_impl should be empty after first access"
+        );
+    } // tools_map goes out of scope here
+
+    // Now safe to re-borrow
+    let tools_map2 = builder.tools_impl();
+    assert!(
+        tools_map2.is_empty(),
+        "tools_impl should still be empty when no tools are added"
+    );
 }
