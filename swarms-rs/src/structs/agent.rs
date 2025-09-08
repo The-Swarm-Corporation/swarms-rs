@@ -1,5 +1,6 @@
 use crate::structs::persistence;
 use crate::structs::tool::ToolError;
+use crate::structs::uuid_pool::IdPool;
 use colored::*;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -213,7 +214,7 @@ impl AgentConfig {
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = IdPool::get_uuid();
 
         let config = Self {
             id: id.clone(),

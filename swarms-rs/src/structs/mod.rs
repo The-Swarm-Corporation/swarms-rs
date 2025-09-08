@@ -9,4 +9,5 @@ pub mod sequential_workflow;
 pub mod swarm;
 pub mod swarms_router;
 pub mod tool;
+pub mod uuid_pool;
 mod utils;
