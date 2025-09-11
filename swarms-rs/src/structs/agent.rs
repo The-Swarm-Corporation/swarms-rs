@@ -13,6 +13,8 @@ use tokio::sync::broadcast;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error("Tool {0} not found")]
+    ConfigError(String),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Serde json error: {0}")]
