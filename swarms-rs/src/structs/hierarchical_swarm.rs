@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error, info};
-
-use crate::structs::swarms_client::{AgentSpec, SwarmsClient};
+use tracing::{debug, error, info, warn};
+use reqwest::{Client, Method};
+use url::Url;
 
 // ================================================================================================
 // ERROR TYPES
@@ -37,11 +38,27 @@ pub enum HierarchicalSwarmError {
     #[error("Unexpected output format from director: {output_type}")]
     UnexpectedOutputFormat { output_type: String },
 
-    #[error("API error: {0}")]
-    ApiError(#[from] crate::structs::swarms_client::SwarmsError),
+    #[error("API error: {message}")]
+    ApiError {
+        message: String,
+        status: Option<u16>,
+        request_id: Option<String>,
+    },
+
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("Timeout error: {message}")]
+    Timeout { message: String },
 
     #[error("Serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    Serialization(#[from] serde_json::Error),
+
+    #[error("URL parse error: {0}")]
+    UrlParse(#[from] url::ParseError),
+
+    #[error("Invalid configuration: {message}")]
+    InvalidConfig { message: String },
 
     #[error("General error: {0}")]
     General(String),
@@ -51,6 +68,400 @@ pub enum HierarchicalSwarmError {
 }
 
 pub type Result<T> = std::result::Result<T, HierarchicalSwarmError>;
+
+// ================================================================================================
+// CORE TYPES (MOVED FROM SWARMS_CLIENT)
+// ================================================================================================
+
+/// Agent specification for creating agents
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpec {
+    pub agent_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default = "default_model")]
+    pub model_name: String,
+    #[serde(default)]
+    pub auto_generate_prompt: bool,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default = "default_max_loops")]
+    pub max_loops: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_dictionary: Option<Vec<HashMap<String, serde_json::Value>>>,
+    #[serde(default)]
+    pub markdown: bool,
+}
+
+fn default_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_max_tokens() -> u32 {
+    8192
+}
+
+fn default_temperature() -> f32 {
+    0.5
+}
+
+fn default_max_loops() -> u32 {
+    1
+}
+
+/// Agent completion request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCompletion {
+    pub agent_config: AgentSpec,
+    pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Token usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub img_cost: f64,
+    #[serde(default)]
+    pub total_cost: f64,
+}
+
+/// Response from an agent completion request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCompletionResponse {
+    pub job_id: String,
+    pub success: bool,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub temperature: f32,
+    pub outputs: Vec<HashMap<String, serde_json::Value>>,
+    pub usage: Usage,
+    pub timestamp: String,
+}
+
+/// Generic error response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub detail: String,
+}
+
+// ================================================================================================
+// SIMPLIFIED HTTP CLIENT
+// ================================================================================================
+
+/// Configuration for the HTTP client
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub api_key: String,
+    pub base_url: Url,
+    pub timeout: Duration,
+    pub max_retries: usize,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: "https://api.swarms.world/".parse().unwrap(),
+            timeout: Duration::from_secs(60),
+            max_retries: 3,
+        }
+    }
+}
+
+/// Simplified HTTP client for API communication
+#[derive(Debug, Clone)]
+pub struct SwarmsClient {
+    client: Client,
+    config: ClientConfig,
+}
+
+impl SwarmsClient {
+    /// Create a new client builder
+    pub fn builder() -> Result<ClientBuilder> {
+        Ok(ClientBuilder::new())
+    }
+
+    /// Create a client with custom configuration
+    pub fn with_config(config: ClientConfig) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(config.timeout)
+            .build()
+            .map_err(|e| HierarchicalSwarmError::Network(e))?;
+
+        Ok(Self { client, config })
+    }
+
+    /// Get agent resource
+    pub fn agent(&self) -> AgentResource {
+        AgentResource::new(self)
+    }
+
+    /// Make an HTTP request with retries
+    async fn request<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<&impl Serialize>,
+    ) -> Result<T> {
+        let mut last_error = None;
+        
+        for attempt in 0..=self.config.max_retries {
+            match self.make_request_attempt(method.clone(), url.clone(), body).await {
+                Ok(response) => {
+                    debug!("Request succeeded on attempt {}", attempt + 1);
+                    return Ok(serde_json::from_value(response)?);
+                },
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < self.config.max_retries {
+                        let delay = Duration::from_secs(1) * 2_u32.pow(attempt as u32);
+                        warn!("Request failed on attempt {}, retrying in {:?}", attempt + 1, delay);
+                        tokio::time::sleep(delay).await;
+                    }
+                },
+            }
+        }
+
+        Err(last_error.unwrap())
+    }
+
+    /// Make a single request attempt
+    async fn make_request_attempt(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<&impl Serialize>,
+    ) -> Result<serde_json::Value> {
+        let mut request_builder = self.client.request(method, url);
+
+        // Add headers
+        request_builder = request_builder
+            .header("Content-Type", "application/json")
+            .header("x-api-key", &self.config.api_key);
+
+        // Add body if provided
+        if let Some(body) = body {
+            request_builder = request_builder.json(body);
+        }
+
+        let response = tokio::time::timeout(self.config.timeout, request_builder.send())
+            .await
+            .map_err(|_| HierarchicalSwarmError::Timeout {
+                message: format!("Request timed out after {:?}", self.config.timeout),
+            })?
+            .map_err(|e| HierarchicalSwarmError::Network(e))?;
+
+        let status = response.status();
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        if !status.is_success() {
+            let body: ErrorResponse = response.json().await.unwrap_or_else(|_| ErrorResponse {
+                detail: "Unknown error".to_string(),
+            });
+
+            return Err(HierarchicalSwarmError::ApiError {
+                message: body.detail,
+                status: Some(status.as_u16()),
+                request_id,
+            });
+        }
+
+        let response_body: serde_json::Value = response.json().await?;
+        debug!("Response: {}", serde_json::to_string_pretty(&response_body)?);
+
+        Ok(response_body)
+    }
+
+    /// Build URL for endpoint
+    fn build_url(&self, endpoint: &str) -> Result<Url> {
+        Ok(self.config.base_url.join(endpoint)?)
+    }
+}
+
+/// Builder for creating a Swarms API client
+#[derive(Debug, Default)]
+pub struct ClientBuilder {
+    config: ClientConfig,
+}
+
+impl ClientBuilder {
+    /// Create a new client builder
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load API key from environment variables and .env file
+    pub fn from_env() -> Result<Self> {
+        // Load .env file if it exists
+        dotenv::dotenv().ok();
+
+        // Try to get API key from environment
+        let api_key = std::env::var("SWARMS_API_KEY").map_err(|_| HierarchicalSwarmError::InvalidConfig {
+            message: "SWARMS_API_KEY not found in environment or .env file".to_string(),
+        })?;
+
+        Ok(Self::new().api_key(api_key))
+    }
+
+    /// Set the API key
+    pub fn api_key<S: Into<String>>(mut self, api_key: S) -> Self {
+        self.config.api_key = api_key.into();
+        self
+    }
+
+    /// Set the base URL
+    pub fn base_url<S: AsRef<str>>(mut self, base_url: S) -> Result<Self> {
+        self.config.base_url = base_url.as_ref().parse()?;
+        Ok(self)
+    }
+
+    /// Set the request timeout
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.config.timeout = timeout;
+        self
+    }
+
+    /// Set the maximum number of retries
+    pub fn max_retries(mut self, max_retries: usize) -> Self {
+        self.config.max_retries = max_retries;
+        self
+    }
+
+    /// Build the client
+    pub fn build(self) -> Result<SwarmsClient> {
+        if self.config.api_key.is_empty() {
+            return Err(HierarchicalSwarmError::InvalidConfig {
+                message: "API key is required".to_string(),
+            });
+        }
+
+        SwarmsClient::with_config(self.config)
+    }
+}
+
+/// Agent resource for agent operations
+#[derive(Debug, Clone)]
+pub struct AgentResource<'a> {
+    client: &'a SwarmsClient,
+}
+
+impl<'a> AgentResource<'a> {
+    fn new(client: &'a SwarmsClient) -> Self {
+        Self { client }
+    }
+
+    /// Create an agent completion
+    async fn create(&self, request: AgentCompletion) -> Result<AgentCompletionResponse> {
+        let url = self.client.build_url("v1/agent/completions")?;
+        self.client.request(Method::POST, url, Some(&request)).await
+    }
+
+    /// Start building an agent completion request
+    pub fn completion(&'a self) -> AgentCompletionBuilder<'a> {
+        AgentCompletionBuilder::new(self)
+    }
+}
+
+/// Builder for agent completions
+#[derive(Debug)]
+pub struct AgentCompletionBuilder<'a> {
+    resource: &'a AgentResource<'a>,
+    request: AgentCompletion,
+}
+
+impl<'a> AgentCompletionBuilder<'a> {
+    fn new(resource: &'a AgentResource<'a>) -> Self {
+        Self {
+            resource,
+            request: AgentCompletion {
+                agent_config: AgentSpec {
+                    agent_name: String::new(),
+                    description: None,
+                    system_prompt: None,
+                    model_name: default_model(),
+                    auto_generate_prompt: false,
+                    max_tokens: default_max_tokens(),
+                    temperature: default_temperature(),
+                    role: None,
+                    max_loops: default_max_loops(),
+                    tools_dictionary: None,
+                    markdown: false,
+                },
+                task: String::new(),
+                history: None,
+            },
+        }
+    }
+
+    /// Set the agent name
+    pub fn agent_name<S: Into<String>>(mut self, name: S) -> Self {
+        self.request.agent_config.agent_name = name.into();
+        self
+    }
+
+    /// Set the task
+    pub fn task<S: Into<String>>(mut self, task: S) -> Self {
+        self.request.task = task.into();
+        self
+    }
+
+    /// Set the model
+    pub fn model<S: Into<String>>(mut self, model: S) -> Self {
+        self.request.agent_config.model_name = model.into();
+        self
+    }
+
+    /// Set the description
+    pub fn description<S: Into<String>>(mut self, description: S) -> Self {
+        self.request.agent_config.description = Some(description.into());
+        self
+    }
+
+    /// Set the system prompt
+    pub fn system_prompt<S: Into<String>>(mut self, prompt: S) -> Self {
+        self.request.agent_config.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set the temperature
+    pub fn temperature(mut self, temperature: f32) -> Self {
+        self.request.agent_config.temperature = temperature.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set max tokens
+    pub fn max_tokens(mut self, max_tokens: u32) -> Self {
+        self.request.agent_config.max_tokens = max_tokens;
+        self
+    }
+
+    /// Set max loops
+    pub fn max_loops(mut self, max_loops: u32) -> Self {
+        self.request.agent_config.max_loops = max_loops;
+        self
+    }
+
+    /// Send the request
+    pub async fn send(self) -> Result<AgentCompletionResponse> {
+        self.resource.create(self.request).await
+    }
+}
 
 // ================================================================================================
 // DATA STRUCTURES
@@ -986,12 +1397,7 @@ impl HierarchicalSwarm {
             self.add_to_conversation(agent_name, &output_content).await?;
         }
 
-        // Render agent output with markdown if enabled
-        if self.markdown_enabled {
-            if let Some(ref formatter) = self.formatter {
-                formatter.render_agent_output(agent_name, &output_content);
-            }
-        }
+        // Markdown functionality removed from core implementation
 
         if self.verbose {
             info!(" Agent {} completed task successfully", agent_name);
@@ -1557,8 +1963,9 @@ impl HierarchicalSwarmBuilder {
     }
 
     /// Enables markdown rendering for agent outputs
-    pub fn md(mut self, enabled: bool) -> Self {
-        self.markdown_enabled = enabled;
+    pub fn md(self, _enabled: bool) -> Self {
+        // Markdown functionality removed from core implementation
+        // This method exists for API compatibility only
         self
     }
 
@@ -1639,6 +2046,7 @@ impl HierarchicalSwarmBuilder {
                 role: Some("director".to_string()),
                 max_loops: 1,
                 tools_dictionary: None,
+                markdown: false,
             }
         });
 
@@ -1653,7 +2061,6 @@ impl HierarchicalSwarmBuilder {
             self.director_name,
             self.director_model_name,
             self.verbose,
-            self.markdown_enabled,
             self.add_collaboration_prompt,
             self.planning_director_agent,
             self.director_feedback_on,
@@ -1675,15 +2082,7 @@ impl Default for HierarchicalSwarmBuilder {
 // CONVERSION IMPLEMENTATIONS
 // ================================================================================================
 
-impl From<HierarchicalSwarmError> for crate::structs::swarms_client::SwarmsError {
-    fn from(err: HierarchicalSwarmError) -> Self {
-        crate::structs::swarms_client::SwarmsError::Api {
-            message: err.to_string(),
-            status: None,
-            request_id: None,
-        }
-    }
-}
+// No external conversions needed since we're self-contained
 
 // ================================================================================================
 // TESTS
@@ -1692,7 +2091,6 @@ impl From<HierarchicalSwarmError> for crate::structs::swarms_client::SwarmsError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::structs::swarms_client::SwarmsClient;
 
     fn create_test_agent(name: &str) -> AgentSpec {
         AgentSpec {
@@ -2102,13 +2500,8 @@ mod tests {
     #[test]
     fn test_error_conversion() {
         let error = HierarchicalSwarmError::NoAgents;
-        let swarms_error: crate::structs::swarms_client::SwarmsError = error.into();
-        
-        match swarms_error {
-            crate::structs::swarms_client::SwarmsError::Api { message, .. } => {
-                assert!(message.contains("No agents found"));
-            },
-            _ => panic!("Expected Api error"),
-        }
+        // Test that the error can be converted to string
+        let error_string = error.to_string();
+        assert!(error_string.contains("No agents found"));
     }
 } 
