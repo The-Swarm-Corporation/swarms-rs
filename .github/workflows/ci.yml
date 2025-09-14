@@ -49,6 +49,21 @@ jobs:
           ${{ runner.os }}-cargo-${{ matrix.rust }}-
           ${{ runner.os }}-cargo-
 
+    # Optimized: Run all autonomous tests in parallel for speed
+    - name: Run autonomous testing suite (parallel)
+      run: |
+        # Run all autonomous tests concurrently for maximum speed
+        cargo test --test test_suite_health --test test_coverage_analysis --test test_integration_scaffolding --test test_security_safety --verbose --jobs 4
+      if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+      continue-on-error: false  # Change to true if you want CI to continue even if autonomous tests fail
+      
+    # Fallback: If autonomous tests fail, run them individually for better error reporting
+    - name: Debug autonomous tests individually (on failure)
+      if: failure() && matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
+      run: |
+        echo "🔍 Running autonomous tests individually for debugging..."
+        ./scripts/debug_autonomous_tests.sh || true
+
     - name: Check formatting
       run: cargo fmt --all -- --check
       if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'

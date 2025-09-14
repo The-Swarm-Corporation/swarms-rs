@@ -1,6 +1,6 @@
 use reqwest::Client;
 use rmcp::{
-    Error as MCPError, ServerHandler,
+    ErrorData as MCPError, ServerHandler,
     model::{CallToolResult, Content, ServerInfo},
     tool,
 };
@@ -25,7 +25,6 @@ pub struct BinanceMCPTools {
     pub client: Client,
 }
 
-#[tool(tool_box)]
 impl BinanceMCPTools {
     pub fn new() -> Self {
         Self {
@@ -39,7 +38,7 @@ impl BinanceMCPTools {
     )]
     async fn agg_trades(
         &self,
-        #[tool(aggr)] params: agg_trades::AggTradesRequest,
+        params: agg_trades::AggTradesRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::agg_trades, params);
         Ok(result)
@@ -48,7 +47,7 @@ impl BinanceMCPTools {
     #[tool(description = "Get current average price for a symbol.")]
     async fn avg_price(
         &self,
-        #[tool(aggr)] params: avg_price::AvgPriceRequest,
+        params: avg_price::AvgPriceRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::avg_price, params);
         Ok(result)
@@ -57,7 +56,7 @@ impl BinanceMCPTools {
     #[tool(description = "Get depth information.")]
     async fn depth(
         &self,
-        #[tool(aggr)] params: depth::DepthRequest,
+        params: depth::DepthRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::depth, params);
         Ok(result)
@@ -66,7 +65,7 @@ impl BinanceMCPTools {
     #[tool(description = "Get older trades.")]
     async fn historical_trades(
         &self,
-        #[tool(aggr)] params: historical_trades::HistoricalTradesRequest,
+        params: historical_trades::HistoricalTradesRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::historical_trades, params);
         Ok(result)
@@ -91,7 +90,7 @@ impl BinanceMCPTools {
         ")]
     async fn klines(
         &self,
-        #[tool(aggr)] params: klines::KlinesRequest,
+        params: klines::KlinesRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::klines, params);
         Ok(result)
@@ -102,7 +101,7 @@ impl BinanceMCPTools {
     )]
     async fn ticker_24hr(
         &self,
-        #[tool(aggr)] params: ticker_24hr::Ticker24HrRequest,
+        params: ticker_24hr::Ticker24HrRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ticker_24hr, params);
         Ok(result)
@@ -111,7 +110,7 @@ impl BinanceMCPTools {
     #[tool(description = "Best price/qty on the order book for all symbols.")]
     async fn ticker_book_ticker(
         &self,
-        #[tool(aggr)] params: ticker_book_ticker::TickerBookTickerRequest,
+        params: ticker_book_ticker::TickerBookTickerRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ticker_book_ticker, params);
         Ok(result)
@@ -120,7 +119,7 @@ impl BinanceMCPTools {
     #[tool(description = "Latest price for all symbols or for a symbol.")]
     async fn ticker_price(
         &self,
-        #[tool(aggr)] params: ticker_price::TickerPriceRequest,
+        params: ticker_price::TickerPriceRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ticker_price, params);
         Ok(result)
@@ -129,7 +128,7 @@ impl BinanceMCPTools {
     #[tool(description = "Latest price for a symbol with 24 hour rolling window.")]
     async fn ticker_rolling_window_price(
         &self,
-        #[tool(aggr)] params: ticker_rolling_window_price::TickerRollingWindowPriceRequest,
+        params: ticker_rolling_window_price::TickerRollingWindowPriceRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ticker_rolling_window_price, params);
         Ok(result)
@@ -138,7 +137,7 @@ impl BinanceMCPTools {
     #[tool(description = "Price change statistics for a trading day.")]
     async fn ticker_trading_day(
         &self,
-        #[tool(aggr)] params: ticker_trading_day::TickerTradingDayRequest,
+        params: ticker_trading_day::TickerTradingDayRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ticker_trading_day, params);
         Ok(result)
@@ -147,7 +146,7 @@ impl BinanceMCPTools {
     #[tool(description = "Recent trades list.")]
     async fn trades(
         &self,
-        #[tool(aggr)] params: trades::TradesRequest,
+        params: trades::TradesRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::trades, params);
         Ok(result)
@@ -172,14 +171,13 @@ impl BinanceMCPTools {
         ")]
     async fn ui_klines(
         &self,
-        #[tool(aggr)] params: ui_klines::UIKlinesRequest,
+        params: ui_klines::UIKlinesRequest,
     ) -> Result<CallToolResult, MCPError> {
         let result = call_api_tool!(self, market_data::ui_klines, params);
         Ok(result)
     }
 }
 
-#[tool(tool_box)]
 impl ServerHandler for BinanceMCPTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
