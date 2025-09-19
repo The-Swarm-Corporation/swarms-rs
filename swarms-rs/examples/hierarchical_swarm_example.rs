@@ -98,25 +98,25 @@ async fn main() -> Result<()> {
     // Step 1: Create the Director Agent (coordinates everything according to architecture)
     let director_agent = AgentSpec {
         agent_name: "Director".to_string(),
-        description: Some("Director Agent that coordinates and orchestrates the entire societal planning process".to_string()),
-        system_prompt: Some(r#"You are a Director Agent responsible for coordinating the planning of a perfect communist society in post-civil war USA. Your role is to:
+        description: Some("Director Agent that coordinates and orchestrates the entire corporate restructuring process".to_string()),
+        system_prompt: Some(r#"You are a Director Agent responsible for coordinating the restructuring of a classic 2008 corporation. Your role is to:
 
-1. ANALYZE the post-war situation and societal needs
-2. CREATE a comprehensive plan for communist society implementation
-3. GENERATE specific orders for specialized planning agents
+1. ANALYZE the current corporate structure and market conditions
+2. CREATE a comprehensive plan for corporate restructuring and modernization
+3. GENERATE specific orders for specialized business agents
 4. EVALUATE results from agents and provide feedback
 5. DECIDE if more iterations are needed for refinement
 
 Always respond with a JSON structure containing:
-- "plan": A detailed step-by-step plan for communist society implementation
+- "plan": A detailed step-by-step plan for corporate restructuring
 - "orders": Array of orders for specific worker agents with clear tasks
 
 Example format:
 {
-  "plan": "Step 1: Analyze post-war conditions... Step 2: Design economic system...",
+  "plan": "Step 1: Analyze current market position... Step 2: Design new organizational structure...",
   "orders": [
-    {"agent_name": "Economic Architect", "task": "Design the communist economic system..."},
-    {"agent_name": "Social Engineer", "task": "Plan social structures and governance..."}
+    {"agent_name": "Financial Analyst", "task": "Analyze current financial position and create restructuring budget..."},
+    {"agent_name": "HR Specialist", "task": "Plan organizational changes and workforce optimization..."}
   ]
 }"#.to_string()),
         model_name: "gpt-4o-mini".to_string(),
@@ -130,10 +130,10 @@ Example format:
     };
 
     // Step 2: Create specialized Worker Agents (execute specific tasks)
-    let economic_architect = AgentSpec {
-        agent_name: "Economic Architect".to_string(),
-        description: Some("Worker Agent designing the communist economic system".to_string()),
-        system_prompt: Some("You are an Economic Architect Worker Agent. Design comprehensive communist economic systems including production, distribution, resource allocation, and worker ownership. Focus on eliminating class distinctions, ensuring equal access to resources, and creating sustainable economic structures. Execute the task assigned by the Director Agent.".to_string()),
+    let financial_analyst = AgentSpec {
+        agent_name: "Financial Analyst".to_string(),
+        description: Some("Worker Agent analyzing financial position and creating restructuring budgets".to_string()),
+        system_prompt: Some("You are a Financial Analyst Worker Agent. Analyze the current financial position of the corporation, identify cost-saving opportunities, create restructuring budgets, and develop financial strategies for modernization. Focus on profitability, cost optimization, and sustainable growth. Execute the task assigned by the Director Agent.".to_string()),
         model_name: "gpt-4o-mini".to_string(),
         auto_generate_prompt: false,
         max_tokens: 2000,
@@ -144,10 +144,10 @@ Example format:
         markdown: false,
     };
 
-    let social_planner = AgentSpec {
-        agent_name: "Social Planner".to_string(),
-        description: Some("Worker Agent planning social structures and governance".to_string()),
-        system_prompt: Some("You are a Social Planner Worker Agent. Design communist social structures including governance systems, community organization, education, healthcare, and social services. Focus on collective decision-making, equal rights, and community solidarity. Execute the task assigned by the Director Agent.".to_string()),
+    let hr_specialist = AgentSpec {
+        agent_name: "HR Specialist".to_string(),
+        description: Some("Worker Agent planning organizational changes and workforce optimization".to_string()),
+        system_prompt: Some("You are an HR Specialist Worker Agent. Plan organizational changes, workforce optimization, employee retention strategies, and modern HR practices. Focus on talent management, employee engagement, and creating efficient organizational structures. Execute the task assigned by the Director Agent.".to_string()),
         model_name: "gpt-4o-mini".to_string(),
         auto_generate_prompt: false,
         max_tokens: 2000,
@@ -158,10 +158,10 @@ Example format:
         markdown: false,
     };
 
-    let infrastructure_engineer = AgentSpec {
-        agent_name: "Infrastructure Engineer".to_string(),
-        description: Some("Worker Agent planning physical infrastructure and technology".to_string()),
-        system_prompt: Some("You are an Infrastructure Engineer Worker Agent. Design communist infrastructure including housing, transportation, energy systems, technology integration, and public spaces. Focus on sustainability, accessibility, and collective ownership. Execute the task assigned by the Director Agent.".to_string()),
+    let technology_consultant = AgentSpec {
+        agent_name: "Technology Consultant".to_string(),
+        description: Some("Worker Agent planning technology modernization and digital transformation".to_string()),
+        system_prompt: Some("You are a Technology Consultant Worker Agent. Plan technology modernization, digital transformation, IT infrastructure upgrades, and automation strategies. Focus on improving efficiency, reducing costs, and staying competitive in the digital age. Execute the task assigned by the Director Agent.".to_string()),
         model_name: "gpt-4o-mini".to_string(),
         auto_generate_prompt: false,
         max_tokens: 2000,
@@ -172,10 +172,10 @@ Example format:
         markdown: false,
     };
 
-    let governance_specialist = AgentSpec {
-        agent_name: "Governance Specialist".to_string(),
-        description: Some("Worker Agent designing cultural and educational systems".to_string()),
-        system_prompt: Some("You are a Governance Specialist Worker Agent. Design communist cultural systems including education, arts, media, recreation, and community activities. Focus on collective cultural development, critical thinking, and cultural equality. Execute the task assigned by the Director Agent.".to_string()),
+    let operations_manager = AgentSpec {
+        agent_name: "Operations Manager".to_string(),
+        description: Some("Worker Agent optimizing business processes and operational efficiency".to_string()),
+        system_prompt: Some("You are an Operations Manager Worker Agent. Optimize business processes, improve operational efficiency, streamline workflows, and implement best practices. Focus on reducing waste, improving quality, and increasing productivity. Execute the task assigned by the Director Agent.".to_string()),
         model_name: "gpt-4o-mini".to_string(),
         auto_generate_prompt: false,
         max_tokens: 2000,
@@ -188,13 +188,13 @@ Example format:
 
     // Step 3: Build the Hierarchical Swarm following the architecture
     let swarm = HierarchicalSwarmBuilder::new()
-        .name("Post-Civil War Communist Society Planning Swarm")
-        .description("A hierarchical swarm that plans a post-civil war communist society")
+        .name("Classic 2008 Corporation Restructuring Swarm")
+        .description("A hierarchical swarm that restructures a classic 2008 corporation")
         .director(director_agent)
-        .agent(economic_architect)
-        .agent(social_planner)
-        .agent(infrastructure_engineer)
-        .agent(governance_specialist)
+        .agent(financial_analyst)
+        .agent(hr_specialist)
+        .agent(technology_consultant)
+        .agent(operations_manager)
         .max_loops(2)
         .sequential_execution(true) // Use sequential execution with memory for better results
         .md(true) //  Enable beautiful markdown output
@@ -203,7 +203,7 @@ Example format:
         .expect("Failed to create hierarchical swarm");
 
     // Define the task
-    let task = "Design a perfect communist society for modern USA after a civil war in 2030. The civil war was triggered by the Trump administration declaring an American Empire, leading to widespread social unrest and eventual collapse of the capitalist system. Plan for economic equality, collective ownership, social justice, sustainable infrastructure, and cultural transformation. Provide comprehensive implementation strategies for transitioning from post-war chaos to a functioning communist society.";
+    let task = "Restructure a classic 2008 corporation that has been struggling with outdated business practices, inefficient operations, and declining market share. The company needs comprehensive modernization to compete in today's digital economy. Plan for financial restructuring, organizational optimization, technology upgrades, and operational efficiency improvements. Provide detailed implementation strategies for transforming this traditional corporation into a modern, competitive, and profitable business.";
 
     // Execute the hierarchical swarm - everything renders automatically with beautiful markdown!
     match swarm.run(task, None).await {
@@ -213,8 +213,8 @@ Example format:
             // - Each worker agent execution
             // - Feedback and evaluation
             // - Workflow completion
-            println!("{}", format_markdown(" Communist society planning process completed successfully!"));
-            println!("{}", format_markdown(&format!(" Generated {} comprehensive planning documents", outputs.len())));
+            println!("{}", format_markdown(" Corporate restructuring process completed successfully!"));
+            println!("{}", format_markdown(&format!(" Generated {} comprehensive restructuring documents", outputs.len())));
             
             // Print the actual results with markdown formatting
             for (i, output) in outputs.iter().enumerate() {
@@ -224,11 +224,11 @@ Example format:
             }
         }
         Err(e) => {
-            println!(" Communist society planning failed: {:?}", e);
+            println!(" Corporate restructuring failed: {:?}", e);
         }
     }
 
-    println!(" Post-civil war communist society planning demonstration completed!");
+    println!(" Classic 2008 corporation restructuring demonstration completed!");
     println!(" Tip: Use .md(true) to enable beautiful markdown output for any swarm!");
     Ok(())
 } 
