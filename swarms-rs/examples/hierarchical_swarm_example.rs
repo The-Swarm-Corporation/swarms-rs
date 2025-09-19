@@ -1,23 +1,66 @@
 use std::env;
 
 use anyhow::Result;
-use swarms_rs::llm::provider::openai::OpenAI;
-use swarms_rs::structs::hierarchical_swarm::{HierarchicalSwarmBuilder, HierarchicalSwarm};
-use swarms_rs::structs::swarms_client::{AgentSpec, SwarmsClient};
+use swarms_rs::structs::hierarchical_swarm::{HierarchicalSwarmBuilder, AgentSpec, SwarmsClient};
+use colored::*;
+use regex::Regex;
 
-/// **SIMPLE MARKDOWN USAGE EXAMPLE**
-/// 
+/// Simple markdown formatter for console output
+fn format_markdown(text: &str) -> String {
+    let mut formatted = text.to_string();
+    
+    // Headers - need to be more careful with replacement order
+    formatted = formatted.replace("#### ", &format!("{}", "#### ".bright_cyan().bold()));
+    formatted = formatted.replace("### ", &format!("{}", "### ".bright_cyan().bold()));
+    formatted = formatted.replace("## ", &format!("{}", "## ".bright_blue().bold()));
+    formatted = formatted.replace("# ", &format!("{}", "# ".bright_magenta().bold()));
+    
+    // Bold text - handle **text** pattern
+    let bold_pattern = Regex::new(r"\*\*(.*?)\*\*").unwrap();
+    formatted = bold_pattern.replace_all(&formatted, |caps: &regex::Captures| {
+        format!("{}", caps.get(1).unwrap().as_str().bold())
+    }).to_string();
+    
+    // Italic text - handle *text* pattern (simple approach)
+    let italic_pattern = Regex::new(r"\*([^*]+)\*").unwrap();
+    formatted = italic_pattern.replace_all(&formatted, |caps: &regex::Captures| {
+        format!("{}", caps.get(1).unwrap().as_str().italic())
+    }).to_string();
+    
+    // Code blocks
+    formatted = formatted.replace("```", &format!("{}", "```".bright_yellow()));
+    
+    // Inline code - handle `text` pattern
+    let code_pattern = Regex::new(r"`([^`]+)`").unwrap();
+    formatted = code_pattern.replace_all(&formatted, |caps: &regex::Captures| {
+        format!("{}", caps.get(1).unwrap().as_str().bright_green())
+    }).to_string();
+    
+    // Lists
+    formatted = formatted.replace("- ", &format!("{}", "• ".bright_white()));
+    
+    // Horizontal rules
+    formatted = formatted.replace("---", &format!("{}", "─".repeat(50).bright_black()));
+    
+    formatted
+}
+
+/// **HIERARCHICAL SWARM USAGE EXAMPLE WITH MARKDOWN**
+///
 /// Enable beautiful markdown output with just one line:
 /// ```rust
 /// let swarm = HierarchicalSwarmBuilder::new()
 ///     .name("My Swarm")
-///     .md(true)  // 🎨 That's it! Everything renders automatically
+///     .director(director_agent)
+///     .agent(worker_agent_1)
+///     .agent(worker_agent_2)
+///     .md(true)  //  Enable beautiful markdown output
 ///     .build()?;
-/// 
-/// // Execute - all agents get beautiful output automatically!
+///
+/// // Execute - everything renders automatically with beautiful markdown!
 /// let results = swarm.run("My task", None).await?;
 /// ```
-/// 
+///
 /// **What happens automatically when .md(true):**
 /// - Director planning gets beautiful borders and markdown
 /// - Each worker agent gets bordered output with markdown
@@ -37,21 +80,16 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    // Set up API keys - prioritize OpenAI for fallback
-    let _api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| {
-        env::var("SWARMS_API_KEY").unwrap_or_else(|_| {
-            "API_KEY_HERE".to_string()
-        })
+    // Set up API key - use Swarms API key (not OpenAI)
+    let api_key = env::var("SWARMS_API_KEY").unwrap_or_else(|_| {
+        "API_KEY_HERE".to_string()
     });
 
-    // Create Swarms client with OpenAI fallback
+    // Create Swarms client using the self-contained implementation
+    // Note: This uses the Swarms API (api.swarms.world), not OpenAI directly
     let client = SwarmsClient::builder()
         .unwrap()
-        .api_key("dummy-swarms-key") // Force OpenAI fallback
-        .openai_api_key("API_KEY_HERE")
-        .enable_openai_fallback(true)
-        .max_concurrent_requests(1000)
-        .circuit_breaker_threshold(1000)
+        .api_key(&api_key)
         .timeout(std::time::Duration::from_secs(60))
         .max_retries(3)
         .build()
@@ -88,6 +126,7 @@ Example format:
         role: Some("director".to_string()),
         max_loops: 1,
         tools_dictionary: None,
+        markdown: false,
     };
 
     // Step 2: Create specialized Worker Agents (execute specific tasks)
@@ -102,6 +141,7 @@ Example format:
         role: Some("worker".to_string()),
         max_loops: 1,
         tools_dictionary: None,
+        markdown: false,
     };
 
     let social_planner = AgentSpec {
@@ -115,6 +155,7 @@ Example format:
         role: Some("worker".to_string()),
         max_loops: 1,
         tools_dictionary: None,
+        markdown: false,
     };
 
     let infrastructure_engineer = AgentSpec {
@@ -128,6 +169,7 @@ Example format:
         role: Some("worker".to_string()),
         max_loops: 1,
         tools_dictionary: None,
+        markdown: false,
     };
 
     let governance_specialist = AgentSpec {
@@ -141,20 +183,21 @@ Example format:
         role: Some("worker".to_string()),
         max_loops: 1,
         tools_dictionary: None,
+        markdown: false,
     };
 
     // Step 3: Build the Hierarchical Swarm following the architecture
     let swarm = HierarchicalSwarmBuilder::new()
         .name("Post-Civil War Communist Society Planning Swarm")
         .description("A hierarchical swarm that plans a post-civil war communist society")
-        .agent(director_agent)
+        .director(director_agent)
         .agent(economic_architect)
         .agent(social_planner)
         .agent(infrastructure_engineer)
         .agent(governance_specialist)
         .max_loops(2)
         .sequential_execution(true) // Use sequential execution with memory for better results
-        .md(true) // 🎨 ENABLE BEAUTIFUL MARKDOWN OUTPUT - Simple one-liner!
+        .md(true) //  Enable beautiful markdown output
         .client(client)
         .build()
         .expect("Failed to create hierarchical swarm");
@@ -162,8 +205,7 @@ Example format:
     // Define the task
     let task = "Design a perfect communist society for modern USA after a civil war in 2030. The civil war was triggered by the Trump administration declaring an American Empire, leading to widespread social unrest and eventual collapse of the capitalist system. Plan for economic equality, collective ownership, social justice, sustainable infrastructure, and cultural transformation. Provide comprehensive implementation strategies for transitioning from post-war chaos to a functioning communist society.";
 
-    // Execute - everything renders automatically with beautiful markdown!
-    // No manual formatter management needed - just .md(true) and go!
+    // Execute the hierarchical swarm - everything renders automatically with beautiful markdown!
     match swarm.run(task, None).await {
         Ok(outputs) => {
             // Beautiful markdown output was automatically rendered for:
@@ -171,15 +213,22 @@ Example format:
             // - Each worker agent execution
             // - Feedback and evaluation
             // - Workflow completion
-            println!("✅ Communist society planning process completed successfully!");
-            println!("📊 Generated {} comprehensive planning documents", outputs.len());
+            println!("{}", format_markdown(" Communist society planning process completed successfully!"));
+            println!("{}", format_markdown(&format!(" Generated {} comprehensive planning documents", outputs.len())));
+            
+            // Print the actual results with markdown formatting
+            for (i, output) in outputs.iter().enumerate() {
+                println!("\n{}", format_markdown(&format!("=== Document {} ===", i + 1)));
+                println!("{}", format_markdown(output));
+                println!("{}", format_markdown("==================\n"));
+            }
         }
         Err(e) => {
-            println!("❌ Communist society planning failed: {:?}", e);
+            println!(" Communist society planning failed: {:?}", e);
         }
     }
 
-    println!("🎉 Post-civil war communist society planning demonstration completed!");
-    println!("💡 Tip: Use .md(true) to enable beautiful markdown output for any swarm!");
+    println!(" Post-civil war communist society planning demonstration completed!");
+    println!(" Tip: Use .md(true) to enable beautiful markdown output for any swarm!");
     Ok(())
 } 
