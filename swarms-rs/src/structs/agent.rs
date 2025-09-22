@@ -1,5 +1,7 @@
 use crate::structs::persistence;
 use crate::structs::tool::ToolError;
+// Logging imports available for future use
+// use crate::{log_agent, log_error_ctx};
 use colored::*;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -72,11 +74,19 @@ impl AgentConfigBuilder {
         self
     }
 
+    /// Set max tokens
     pub fn max_tokens(mut self, max_tokens: u64) -> Self {
         Arc::make_mut(&mut self.config).max_tokens = max_tokens;
         self
     }
 
+    /// Set markdown enabled/disabled
+    pub fn md(mut self, enabled: bool) -> Self {
+        Arc::make_mut(&mut self.config).markdown = enabled;
+        self
+    }
+
+    /// Enable plan
     pub fn enable_plan(mut self, planning_prompt: impl Into<Option<String>>) -> Self {
         let config = Arc::make_mut(&mut self.config);
         config.plan_enabled = true;
@@ -159,6 +169,7 @@ pub struct AgentConfig {
     pub task_evaluator_tool_enabled: bool,
     pub concurrent_tool_call_enabled: bool,
     pub verbose: bool,
+    pub markdown: bool,
     #[serde(skip)]
     pub response_cache: HashMap<String, String>,
 }
@@ -209,6 +220,11 @@ impl AgentConfig {
     pub fn cache_response(&mut self, input: String, response: String) {
         self.response_cache.insert(input, response);
     }
+
+    /// Get a formatter instance configured for this agent
+    pub fn get_formatter(&self) -> crate::utils::formatter::Formatter {
+        crate::utils::formatter::Formatter::new(self.markdown)
+    }
 }
 
 impl Default for AgentConfig {
@@ -233,6 +249,7 @@ impl Default for AgentConfig {
             task_evaluator_tool_enabled: true,
             concurrent_tool_call_enabled: true,
             verbose: false,                              // Default to verbose logging
+            markdown: true,
             response_cache: HashMap::with_capacity(100), // Pre-allocate cache capacity
         };
 
@@ -277,6 +294,9 @@ pub trait Agent: Send + Sync {
 
     /// Get agent description
     fn description(&self) -> String;
+
+    /// Set markdown enabled/disabled for this agent
+    fn md(&mut self, enabled: bool);
 
     fn clone_box(&self) -> Box<dyn Agent>;
 }

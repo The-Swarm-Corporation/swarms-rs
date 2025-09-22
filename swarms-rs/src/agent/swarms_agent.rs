@@ -1,86 +1,44 @@
 //! # Swarms Agent Implementation
-//!
+//! 
 //! This module provides the core `SwarmsAgent` implementation - an autonomous AI agent
-//! that can execute tasks using Large Language Models (LLMs) with tool integration,
-//! memory management, and configurable execution patterns.
-//!
+//! that can execute complex tasks through iterative loops, tool usage, and memory management.
+//! 
+//! ## Overview
+//! 
+//! The `SwarmsAgent` is designed to autonomously complete tasks by:
+//! 
+//! 1. **Planning**: Optional planning phase to break down complex tasks
+//! 2. **Execution**: Iterative execution loops with configurable retry mechanisms
+//! 3. **Tool Usage**: Integration with both native Rust tools and external MCP servers
+//! 4. **Memory Management**: Short-term conversation memory and optional long-term storage
+//! 5. **State Persistence**: Automatic saving and restoration of agent state
+//! 6. **Error Recovery**: Built-in retry mechanisms and graceful error handling
+//! 
 //! ## Key Features
-//!
-//! - **LLM Integration**: Works with any LLM provider that implements the `llm::Model` trait
-//! - **Tool System**: Supports both native Rust tools and MCP (Model Context Protocol) servers
-//! - **Memory Management**: Short-term memory for conversation history and context
-//! - **Task Planning**: Optional planning phase with configurable prompts
-//! - **State Persistence**: Automatic saving and loading of agent state
-//! - **Concurrent Execution**: Support for concurrent tool calls and multiple tasks
-//! - **Configurable Logging**: Optional verbose logging for debugging and monitoring
-//!
-//! ## Basic Usage
-//!
-//! ```rust,no_run
-//! use swarms_rs::agent::SwarmsAgentBuilder;
-//! use swarms_rs::llm::provider::openai::OpenAIProvider;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create an LLM provider
-//! let model = OpenAIProvider::new("your-api-key")?;
-//!
-//! // Build an agent
-//! let agent = SwarmsAgentBuilder::new_with_model(model)
-//!     .agent_name("TaskAgent")
-//!     .system_prompt("You are a helpful AI assistant.")
-//!     .max_loops(3)
-//!     .temperature(0.7)
-//!     .verbose(true) // Enable logging
-//!     .build();
-//!
-//! // Execute a task
-//! let result = agent.run("Analyze the current market trends".to_string()).await?;
-//! println!("Result: {}", result);
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Advanced Configuration
-//!
-//! ```rust,no_run
-//! use swarms_rs::agent::SwarmsAgentBuilder;
-//! use swarms_rs::llm::provider::openai::OpenAIProvider;
-//! use swarms_rs::structs::tool::Tool;
-//!
-//! # async fn advanced_example() -> Result<(), Box<dyn std::error::Error>> {
-//! let model = OpenAIProvider::new("your-api-key")?;
-//!
-//! let agent = SwarmsAgentBuilder::new_with_model(model)
-//!     .agent_name("AdvancedAgent")
-//!     .system_prompt("You are an advanced AI agent with specialized tools.")
-//!     .max_loops(5)
-//!     .temperature(0.3)
-//!     .enable_plan(Some("Create a step-by-step plan for: ".to_string()))
-//!     .enable_autosave()
-//!     .save_state_dir("./agent_states")
-//!     .retry_attempts(2)
-//!     .add_stop_word("TASK_COMPLETE")
-//!     .verbose(false) // Disable logging for production
-//!     .build();
-//!
-//! let result = agent.run("Complex analytical task".to_string()).await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Tool Integration
-//!
-//! The agent supports multiple ways to add tools:
-//!
-//! - **Native Rust Tools**: Implement the `Tool` trait
-//! - **MCP Servers**: Connect to external MCP servers via SSE or stdio
-//! - **Built-in Tools**: Task evaluator tool for autonomous task completion
-//!
-//! ## Memory and Persistence
-//!
-//! - **Short-term Memory**: Maintains conversation history during task execution
+//! 
+//! - **Autonomous Task Execution**: Can complete complex tasks without human intervention
+//! - **Tool Integration**: Seamlessly integrates with Rust tools and external MCP servers
+//! - **Memory Management**: Maintains conversation history and context throughout execution
 //! - **State Persistence**: Optional automatic saving of agent state to disk
-//! - **Task Hashing**: Efficient state management using content-based hashing
+//! - **Configurable Execution**: Flexible configuration for different use cases
+//! - **Concurrent Operations**: Supports concurrent tool calls and multiple task execution
+//! - **Error Recovery**: Includes retry mechanisms and comprehensive error handling
+//! - **Performance Considerations**:
+//!     - **Memory Usage**: Short-term memory grows with conversation length
+//!     - **Tool Execution**: Tools can be executed concurrently for better performance
+//!     - **State Persistence**: Automatic saving can be disabled for performance-critical scenarios
+//!     - **Loop Limits**: Configure max_loops to prevent infinite execution
+//!     - **Retry Logic**: Balance reliability with performance through retry configuration
+//!     - **Logging Overhead**: Disable verbose logging in production for better performance
+//! 
+//! ## Security Considerations
+//! 
+//! - **Tool Sandboxing**: Tools should implement their own security measures
+//! - **Input Validation**: Validate all inputs before processing
+//! - **State Isolation**: Each agent instance maintains isolated state
+//! - **Error Information**: Avoid exposing sensitive information in error messages
+//! - **Resource Limits**: Configure appropriate limits to prevent resource exhaustion
+//! - **Access Control**: Implement access controls for sensitive operations
 
 use std::{
     ffi::OsStr,
@@ -89,6 +47,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use twox_hash::XxHash3_64;
 
 use colored::*;
 use dashmap::DashMap;
@@ -107,7 +66,6 @@ use tokio::{
     process::Command,
     sync::{Mutex, mpsc},
 };
-use twox_hash::XxHash3_64;
 
 use crate::{
     self as swarms_rs,
@@ -118,32 +76,31 @@ use crate::{
     log_agent, log_error_ctx, log_llm, log_memory, log_perf, log_task,
     structs::{
         conversation::{AgentShortMemory, Role},
+        agent::{Agent, AgentConfig, AgentError},
         persistence,
         tool::{MCPTool, Tool, ToolDyn},
     },
 };
 
-use crate::structs::agent::{Agent, AgentConfig, AgentError};
-
 /// Builder pattern implementation for creating `SwarmsAgent` instances with customizable configuration.
-///
+/// 
 /// The `SwarmsAgentBuilder` provides a fluent interface for configuring all aspects of an agent
 /// before building the final instance. This includes LLM settings, tool integration, memory configuration,
 /// and execution parameters.
-///
+/// 
 /// # Type Parameters
-///
+/// 
 /// - `M`: The LLM model type that implements `llm::Model`
-///
+/// 
 /// # Examples
-///
+/// 
 /// ```rust,no_run
 /// use swarms_rs::agent::SwarmsAgentBuilder;
 /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-///
+/// 
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let model = OpenAIProvider::new("api-key")?;
-///
+/// 
 /// let agent = SwarmsAgentBuilder::new_with_model(model)
 ///     .agent_name("DataAnalyst")
 ///     .system_prompt("You are a data analysis expert.")
@@ -178,20 +135,20 @@ where
     M::RawCompletionResponse: Clone + Send + Sync,
 {
     /// Creates a new `SwarmsAgentBuilder` with the specified LLM model.
-    ///
+    /// 
     /// This is the entry point for building a new agent. The model will be used
     /// for all LLM interactions during agent execution.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `model` - An LLM model instance that implements the `llm::Model` trait
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("your-api-key")?;
     /// let builder = SwarmsAgentBuilder::new_with_model(model);
@@ -209,21 +166,21 @@ where
     }
 
     /// Sets a custom agent configuration.
-    ///
+    /// 
     /// This replaces the default configuration with a custom one. Use this when you
     /// need fine-grained control over agent behavior or when loading a saved configuration.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `config` - The `AgentConfig` to use for this agent
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::structs::agent::AgentConfig;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
     /// let custom_config = AgentConfig::builder()
@@ -231,7 +188,7 @@ where
     ///     .max_loops(5)
     ///     .temperature(0.3)
     ///     .build();
-    ///
+    /// 
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .config(*custom_config)
     ///     .build();
@@ -244,23 +201,23 @@ where
     }
 
     /// Sets the system prompt that guides the agent's behavior.
-    ///
+    /// 
     /// The system prompt is sent to the LLM before every interaction and defines
     /// the agent's role, personality, and general instructions.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `system_prompt` - A string that will be used as the system prompt
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
-    ///
+    /// 
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .system_prompt("You are a helpful assistant specialized in data analysis. Always provide detailed explanations.")
     ///     .build();
@@ -273,40 +230,39 @@ where
     }
 
     /// Adds a native Rust tool to the agent's toolkit.
-    ///
+    /// 
     /// Tools extend the agent's capabilities by allowing it to perform specific actions
-    /// or access external data. The agent can call these tools autonomously based on
-    /// the task requirements.
-    ///
+    /// or access external data. The agent can call these tools autonomously based
+    /// on the task requirements.
+    /// 
     /// # Type Parameters
-    ///
+    /// 
     /// * `T` - A type that implements the `Tool` trait
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `tool` - An instance of the tool to add
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
     /// use swarms_rs::structs::tool::Tool;
-    ///
+    /// 
     /// // Define a custom tool (implementation details omitted)
     /// struct CalculatorTool;
-    ///
+    /// 
     /// # impl Tool for CalculatorTool {
-    /// #     fn name(&self) -> &str { "calculator" }
-    /// #     fn definition(&self) -> swarms_rs::llm::request::ToolDefinition { todo!() }
-    /// # }
-    /// # impl swarms_rs::structs::tool::ToolDyn for CalculatorTool {
+    /// #     fn name(&self) -> String { "calculator".to_string() }
+    /// #     fn description(&self) -> String { "A calculator tool".to_string() }
+    /// #     fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
     /// #     fn call(&self, args: String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, swarms_rs::structs::tool::ToolError>> + Send + '_>> { todo!() }
     /// # }
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
-    ///
+    /// 
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .add_tool(CalculatorTool)
     ///     .build();
@@ -321,25 +277,25 @@ where
     }
 
     /// Adds tools from an MCP (Model Context Protocol) server via SSE (Server-Sent Events).
-    ///
+    /// 
     /// This method connects to an external MCP server over HTTP/SSE and automatically
     /// adds all available tools from that server to the agent. The connection is
     /// established asynchronously and tools are loaded during the build process.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `name` - A name identifier for this MCP server connection
     /// * `url` - The HTTP/HTTPS URL of the MCP server's SSE endpoint
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
-    ///
+    /// 
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .add_sse_mcp_server("weather_service", "https://weather-api.example.com/mcp")
     ///     .await
@@ -347,9 +303,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    ///
+    /// 
     /// # Panics
-    ///
+    /// 
     /// This method will panic if:
     /// - The SSE transport cannot be established
     /// - The MCP server handshake fails
@@ -385,31 +341,30 @@ where
     }
 
     /// Adds tools from an MCP server via stdio (standard input/output).
-    ///
+    /// 
     /// This method launches an external process that implements the MCP protocol
     /// over stdio and automatically adds all available tools from that process
     /// to the agent. This is useful for integrating with command-line tools or
     /// scripts that implement MCP.
-    ///
+    /// 
     /// # Type Parameters
-    ///
+    /// 
     /// * `I` - An iterator of command line arguments
     /// * `S` - A type that can be converted to an OS string (typically `&str` or `String`)
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `command` - The command/executable to run
     /// * `args` - Command line arguments to pass to the executable
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
-    ///
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .add_stdio_mcp_server("python", ["./my_mcp_tool.py", "--mcp"])
     ///     .await
@@ -417,9 +372,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    ///
+    /// 
     /// # Panics
-    ///
+    /// 
     /// This method will panic if:
     /// - The child process cannot be spawned
     /// - The MCP server handshake fails
@@ -606,82 +561,82 @@ where
 }
 
 /// The main Swarms Agent implementation providing autonomous task execution capabilities.
-///
+/// 
 /// `SwarmsAgent` is the core agent implementation that combines an LLM with tools, memory,
 /// and configurable execution patterns to autonomously complete tasks. The agent follows
 /// an iterative execution loop where it:
-///
+/// 
 /// 1. Receives a task
 /// 2. Optionally creates a plan
 /// 3. Executes the task through multiple loops
 /// 4. Uses tools when necessary
 /// 5. Maintains conversation history
 /// 6. Saves state for persistence
-///
+/// 
 /// ## Key Capabilities
-///
+/// 
 /// - **Autonomous Task Execution**: Can complete complex tasks without human intervention
 /// - **Tool Integration**: Seamlessly integrates with Rust tools and external MCP servers
 /// - **Memory Management**: Maintains short-term conversation memory throughout task execution
 /// - **State Persistence**: Can save and restore agent state across sessions
 /// - **Error Recovery**: Includes retry mechanisms and error handling
 /// - **Concurrent Operations**: Supports concurrent tool calls and multiple task execution
-///
+/// 
 /// ## Task Execution Flow
-///
+/// 
 /// 1. **Initialization**: Task is added to memory, optional planning phase
 /// 2. **Execution Loop**: Agent iteratively works on the task up to `max_loops` times
 /// 3. **Tool Usage**: Agent can call tools autonomously based on task requirements
 /// 4. **Completion Detection**: Built-in task evaluator or custom stop words detect completion
 /// 5. **State Saving**: Optional automatic saving of conversation history and state
-///
+/// 
 /// # Type Parameters
-///
+/// 
 /// - `M`: The LLM model type that implements `llm::Model`
-///
+/// 
 /// # Examples
-///
+/// 
 /// ## Basic Task Execution
-///
+/// 
 /// ```rust,no_run
 /// use swarms_rs::agent::SwarmsAgentBuilder;
 /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-///
+/// 
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let model = OpenAIProvider::new("your-api-key")?;
-///
+/// 
 /// let agent = SwarmsAgentBuilder::new_with_model(model)
 ///     .agent_name("DataAnalyst")
 ///     .system_prompt("You are a data analysis expert.")
 ///     .max_loops(3)
 ///     .build();
-///
+/// 
 /// let result = agent.run("Analyze sales trends for Q4".to_string()).await?;
 /// println!("Analysis: {}", result);
 /// # Ok(())
 /// # }
 /// ```
-///
+/// 
 /// ## Multiple Tasks
-///
+/// 
 /// ```rust,no_run
 /// use swarms_rs::agent::SwarmsAgentBuilder;
 /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-///
+/// 
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let model = OpenAIProvider::new("your-api-key")?;
-///
+/// 
 /// let mut agent = SwarmsAgentBuilder::new_with_model(model)
 ///     .agent_name("MultiTaskAgent")
 ///     .max_loops(2)
 ///     .build();
-///
+/// 
 /// let tasks = vec![
 ///     "Create a summary of recent news".to_string(),
 ///     "Generate a weekly report".to_string(),
 ///     "Analyze user feedback".to_string(),
 /// ];
-///
+/// 
 /// let results = agent.run_multiple_tasks(tasks).await?;
 /// for result in results {
 ///     println!("Result: {}", result);
@@ -708,6 +663,8 @@ where
     /// Tool implementation instances (not serialized)
     #[serde(skip)]
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
+    /// Enable or disable markdown output formatting
+    markdown: bool,
 }
 
 impl<M> SwarmsAgent<M>
@@ -716,21 +673,21 @@ where
     M::RawCompletionResponse: Clone + Send + Sync,
 {
     /// Creates a new `SwarmsAgent` with minimal configuration.
-    ///
+    /// 
     /// This is a simple constructor for creating an agent with just a model and optional
     /// system prompt. For more advanced configuration, use `SwarmsAgentBuilder`.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `model` - The LLM model to use for generating responses
     /// * `system_prompt` - Optional system prompt to guide agent behavior
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgent;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
     /// let agent = SwarmsAgent::new(model, "You are a helpful assistant");
@@ -745,44 +702,95 @@ where
             short_memory: AgentShortMemory::new(),
             tools: vec![],
             tools_impl: DashMap::new(),
+            markdown: false,
+        }
+    }
+
+    /// Set the configuration for this agent
+    pub fn with_config(mut self, config: AgentConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn get_config(&self) -> &AgentConfig {
+        &self.config
+    }
+
+    /// Get a formatter instance configured for this agent
+    pub fn get_formatter(&self) -> crate::utils::formatter::Formatter {
+        let formatter = crate::utils::formatter::Formatter::new(self.markdown);
+        formatter
+    }
+
+    /// Check if markdown output is enabled for this agent
+    pub fn is_markdown_enabled(&self) -> bool {
+        self.markdown
+    }
+
+    /// Enable markdown output for this agent
+    pub fn enable_markdown(&mut self) {
+        self.markdown = true;
+    }
+
+    /// Disable markdown output for this agent
+    pub fn disable_markdown(&mut self) {
+        self.markdown = false;
+    }
+
+    /// Auto-render agent output with markdown formatting if enabled
+    pub fn auto_render_output(&self, content: &str) {
+        if self.markdown {
+            let mut formatter = self.get_formatter();
+            formatter.render_agent_output(&self.config.name, content);
+        }
+    }
+
+    /// Render agent output with explicit markdown control
+    pub fn render_output(&self, content: &str, use_markdown: bool) {
+        if use_markdown {
+            let mut formatter = crate::utils::formatter::Formatter::new(true);
+            formatter.render_agent_output(&self.config.name, content);
+        } else {
+            // Plain text output
+            println!("[{}]: {}", self.config.name, content);
         }
     }
 
     /// Performs a single chat interaction with the agent.
-    ///
+    /// 
     /// This method allows for direct conversation with the agent without the full
     /// autonomous task execution loop. It's useful for interactive scenarios or
     /// when you need more control over the conversation flow.
-    ///
+    /// 
     /// The agent will either return a text response or execute tool calls based
     /// on the conversation context.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `prompt` - The user message/prompt to send to the agent
     /// * `chat_history` - Previous conversation messages for context
-    ///
+    /// 
     /// # Returns
-    ///
+    /// 
     /// Returns a `ChatResponse` which is either:
     /// - `ChatResponse::Text(String)` - A text response from the LLM
     /// - `ChatResponse::ToolCalls(Vec<ToolCallOutput>)` - Results from tool execution
-    ///
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```rust,no_run
     /// use swarms_rs::agent::SwarmsAgentBuilder;
     /// use swarms_rs::llm::provider::openai::OpenAIProvider;
     /// use swarms_rs::agent::ChatResponse;
-    ///
+    /// 
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let model = OpenAIProvider::new("api-key")?;
     /// let agent = SwarmsAgentBuilder::new_with_model(model)
     ///     .system_prompt("You are a helpful math tutor")
     ///     .build();
-    ///
+    /// 
     /// let response = agent.chat("What is 2 + 2?", vec![]).await?;
-    ///
+    /// 
     /// match response {
     ///     ChatResponse::Text(text) => println!("Agent: {}", text),
     ///     ChatResponse::ToolCalls(calls) => {
@@ -794,9 +802,9 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    ///
+    /// 
     /// # Errors
-    ///
+    /// 
     /// Returns an `AgentError` if:
     /// - The LLM request fails
     /// - Tool execution fails
@@ -845,7 +853,7 @@ where
                                         Some(tool) => tool,
                                         None => {
                                             tracing::error!("Tool not found: {}", tool_call.name);
-                                            results.lock().await.push(ToolCallOutput {
+                                            results.lock().unwrap().push(ToolCallOutput {
                                                 name: tool_call.name,
                                                 args: tool_call.arguments.to_string(),
                                                 result: "Tool not found".to_owned(),
@@ -866,7 +874,7 @@ where
                                             args,
                                             e
                                         );
-                                        results.lock().await.push(ToolCallOutput {
+                                        results.lock().unwrap().push(ToolCallOutput {
                                             name: tool_call.name,
                                             args,
                                             result: e.to_string(),
@@ -874,7 +882,7 @@ where
                                         return;
                                     },
                                 };
-                                results.lock().await.push(ToolCallOutput {
+                                results.lock().unwrap().push(ToolCallOutput {
                                     name: tool_call.name,
                                     args,
                                     result,
@@ -894,7 +902,7 @@ where
                         // execute tool
                         let result_str = tool.call(args.clone()).await?;
                         // collect results
-                        results.lock().await.push(ToolCallOutput {
+                        results.lock().unwrap().push(ToolCallOutput {
                             name: tool_call.name.clone(),
                             args,
                             result: result_str,
@@ -903,7 +911,7 @@ where
                 }
 
                 Ok(ChatResponse::ToolCalls(
-                    Arc::clone(&results).lock().await.clone(),
+                    Arc::clone(&results).lock().unwrap().clone(),
                 ))
             },
         }
@@ -912,17 +920,6 @@ where
     pub async fn prompt(&self, prompt: impl Into<String>) -> Result<String, AgentError> {
         let prompt = prompt.into();
         let start_time = std::time::Instant::now();
-
-        if self.config.verbose {
-            log_llm!(
-                info,
-                &self.config.name,
-                &self.config.id,
-                "Prompt Request",
-                "Sending prompt to LLM: '{}'",
-                prompt.chars().take(100).collect::<String>()
-            );
-        }
 
         let request = CompletionRequest {
             prompt: llm::completion::Message::user(prompt.clone()),
@@ -934,28 +931,12 @@ where
         };
 
         let response = self.model.completion(request).await.map_err(|e| {
-            if self.config.verbose {
-                log_error_ctx!(&self.config.name, &self.config.id, &e, "LLM completion");
-            }
             e
         })?;
 
         let choice = response.choice.first().ok_or(AgentError::NoChoiceFound)?;
         let result = match ToOwned::to_owned(choice) {
             llm::completion::AssistantContent::Text(text) => {
-                let duration = start_time.elapsed().as_millis() as u64;
-                if self.config.verbose {
-                    log_perf!(info, "LLM", "completion_time", duration, "ms");
-                    log_llm!(
-                        debug,
-                        &self.config.name,
-                        &self.config.id,
-                        "Prompt Response",
-                        "Received response ({}ms): '{}'",
-                        duration,
-                        text.text.chars().take(100).collect::<String>()
-                    );
-                }
                 Ok(text.text)
             },
             llm::completion::AssistantContent::ToolCall(_) => {
@@ -968,7 +949,12 @@ where
 
     pub fn tool(mut self, tool: impl ToolDyn + 'static) -> Self {
         let toolname = tool.name();
-        let definition = tool.definition();
+        // Create tool definition from the tool's parameters
+        let definition = llm::request::ToolDefinition {
+            name: toolname.clone(),
+            description: tool.description(),
+            parameters: tool.parameters(),
+        };
         self.tools.push(definition);
         self.tools_impl.insert(toolname, Arc::new(tool));
         self
@@ -1049,11 +1035,6 @@ where
                 }
                 self.plan(task.clone()).await?;
             }
-
-            // Query long term memory
-            // if self.long_term_memory.is_some() {
-            //     self.query_long_term_memory(task.clone()).await?;
-            // }
 
             // Save state
             if self.config.autosave {
@@ -1141,19 +1122,10 @@ where
                 }
 
                 let mut success = false;
-                // let task_prompt = self.short_memory.0.get(&task).unwrap().to_string(); // Safety: task is in short_memory
                 for attempt in 0..self.config.retry_attempts {
                     if success {
                         break;
                     }
-
-                    // if self.long_term_memory.is_some() && self.config.rag_every_loop {
-                    //     // FIXME: if RAG success, but then LLM fails, then RAG is not removed and maybe causes issues
-                    //     if let Err(e) = self.query_long_term_memory(task_prompt.clone()).await {
-                    //         self.handle_error_in_attempts(&task, e, attempt).await;
-                    //         continue;
-                    //     };
-                    // }
 
                     // Generate response using LLM
                     let history = self.short_memory.0.get(&task).unwrap(); // Safety: task is in short_memory
@@ -1165,10 +1137,6 @@ where
                                 continue;
                             },
                         };
-                    // needed to drop the lock
-                    // if use:
-                    // let history = (&(*self.short_memory.0.get(&task).unwrap())).into();
-                    // we don't need to drop the lock, because the lock is owned by temporary variable
                     drop(history);
 
                     // handle ChatResponse
@@ -1199,20 +1167,11 @@ where
                                             match task_status {
                                                 TaskStatus::Complete => {
                                                     task_complete = true;
-                                                    // Task is complete
-                                                    // This may be a bit redundant, but it's here for clarity
-                                                    // last_response_text = format!(
-                                                    //     "Task marked as complete by task_evaluator. Result: {}",
-                                                    //     tool_call.result
-                                                    // );
                                                     assistant_memory_content = formatted;
-                                                    // Store the final tool call in memory
                                                 },
                                                 TaskStatus::Incomplete { context } => {
                                                     task_complete = false;
-                                                    // If not complete, store the context for the next loop's prompt
                                                     last_response_text = context;
-                                                    // Keep the raw tool result for memory
                                                     assistant_memory_content = formatted;
                                                 },
                                             }
@@ -1231,17 +1190,13 @@ where
                                                 tool_call.result
                                             );
                                             assistant_memory_content = formatted;
-                                            // Store the problematic call
                                         },
                                     }
                                 } else {
                                     // Handle other tool calls if necessary, for now just format them
-                                    // If this is the *only* response part, update last_response_text
                                     if formatted_tool_results.len() == formatted.len() {
-                                        // Check if it's the first/only tool result string being built
                                         last_response_text = formatted_tool_results.clone();
                                     } else {
-                                        // Append to existing text/tool results for the final response string
                                         last_response_text.push_str(&formatted);
                                     }
                                 }
@@ -1250,7 +1205,6 @@ where
                             // ensure assistant_memory_content reflects all calls.
                             if assistant_memory_content.is_empty() || !is_task_evaluator_called {
                                 assistant_memory_content = formatted_tool_results.clone();
-                                // Update last_response_text if it wasn't set by task_evaluator
                                 if !is_task_evaluator_called {
                                     last_response_text = formatted_tool_results;
                                 }
@@ -1265,14 +1219,18 @@ where
                         &task,
                         &self.config.name,
                         Role::Assistant(self.config.name.to_owned()),
-                        assistant_memory_content.clone(), // Add the text or formatted tool calls
+                        assistant_memory_content.clone(),
                     );
+
+                    // Render output with markdown formatting if enabled
+                    if self.markdown {
+                        self.auto_render_output(&assistant_memory_content);
+                    }
 
                     success = true;
                 }
 
                 if !success {
-                    // Exit the loop if all retry failed
                     break;
                 }
 
@@ -1292,12 +1250,7 @@ where
                     }
                     break;
                 }
-
-                // TODO: Loop interval, maybe add a sleep here
             }
-
-            // TODO: Apply the cleaning function to the responses
-            // clean and add to short memory. role: Assistant(Output Cleaner)
 
             // Save state
             if self.config.autosave {
@@ -1348,14 +1301,14 @@ where
 
         Box::pin(async move {
             let agent_arc = Arc::new(self);
-            let (tx, mut rx) = mpsc::channel(1);
+            let (tx, mut rx) = mpsc::channel(100);
             stream::iter(tasks)
                 .for_each_concurrent(None, |task| {
                     let tx = tx.clone();
                     let agent = Arc::clone(&agent_arc);
                     async move {
                         let result = agent.run(task.clone()).await;
-                        tx.send((task, result)).await.unwrap(); // Safety: we know rx is not dropped
+                        let _ = tx.send((task, result)).await; // Safety: we know rx is not dropped
                     }
                 })
                 .await;
@@ -1442,29 +1395,33 @@ where
         self.config.description.clone().unwrap_or_default()
     }
 
+    fn md(&mut self, enabled: bool) {
+        self.markdown = enabled;
+    }
+
     fn clone_box(&self) -> Box<dyn Agent> {
         Box::new(self.clone())
     }
 }
 
 /// Represents the response from a chat interaction with the agent.
-///
+/// 
 /// The agent can respond in two ways: with plain text or by executing tools.
 /// This enum distinguishes between these response types and provides the
 /// appropriate data for each case.
-///
+/// 
 /// # Examples
-///
+/// 
 /// ```rust,no_run
 /// use swarms_rs::agent::{ChatResponse, SwarmsAgentBuilder};
 /// use swarms_rs::llm::provider::openai::OpenAIProvider;
-///
+/// 
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let model = OpenAIProvider::new("api-key")?;
 /// let agent = SwarmsAgentBuilder::new_with_model(model).build();
-///
+/// 
 /// let response = agent.chat("Hello!", vec![]).await?;
-///
+/// 
 /// match response {
 ///     ChatResponse::Text(text) => {
 ///         println!("Agent responded with text: {}", text);
@@ -1482,13 +1439,12 @@ where
 #[derive(Debug, Clone)]
 pub enum ChatResponse {
     /// Plain text response from the LLM.
-    ///
+    /// 
     /// This variant contains the raw text response when the agent doesn't
     /// need to use any tools to complete the request.
     Text(String),
-
     /// Results from executing one or more tool calls requested by the LLM.
-    ///
+    /// 
     /// This variant contains the outputs from all tools that were called
     /// during the chat interaction. The agent may call multiple tools
     /// concurrently or sequentially based on the task requirements.
@@ -1496,41 +1452,39 @@ pub enum ChatResponse {
 }
 
 /// Contains the complete information about a single tool execution.
-///
+/// 
 /// When an agent executes a tool, this structure captures all the relevant
 /// information about the call, including the tool name, arguments passed,
 /// and the result returned. This is useful for debugging, logging, and
 /// understanding the agent's decision-making process.
-///
+/// 
 /// # Examples
-///
+/// 
 /// ```rust,no_run
 /// use swarms_rs::agent::ToolCallOutput;
-///
+/// 
 /// let tool_output = ToolCallOutput {
 ///     name: "calculator".to_string(),
 ///     args: r#"{"operation": "add", "a": 5, "b": 3}"#.to_string(),
 ///     result: "8".to_string(),
 /// };
-///
-/// println!("Tool {} with args {} returned: {}",
+/// 
+/// println!("Tool {} with args {} returned: {}", 
 ///          tool_output.name, tool_output.args, tool_output.result);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallOutput {
     /// The name of the tool that was executed.
-    ///
+    /// 
     /// This corresponds to the tool's identifier as registered with the agent.
     pub name: String,
-
     /// The arguments passed to the tool as a JSON string.
-    ///
+    /// 
     /// The arguments are serialized as JSON to provide a consistent format
     /// regardless of the tool's specific parameter structure.
     pub args: String,
-
     /// The result returned by the tool's execution as a string.
-    ///
+    /// 
     /// All tool results are converted to strings for consistent handling,
     /// even if the tool internally works with other data types.
     pub result: String,
