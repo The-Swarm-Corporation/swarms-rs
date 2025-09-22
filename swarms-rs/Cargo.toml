@@ -45,20 +45,21 @@ reqwest = { version = "0.12", features = [
     "multipart",
     "rustls-tls-native-roots",
 ], default-features = false }
+regex = "1.0"
 async-openai = { version = "0.28", features = ["byot"] }
 anyhow = "1"
 async-trait = "0.1"
 
-# rmcp = { version = "0.1.5", features = [
-#     "client",
-#     "transport-sse",
-#     "transport-child-process",
-# ] }
-# hyper = { version = "1.0", features = ["http1", "client", "server"] }
-# hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] }
-# hyper-tls = "0.6"
-# bytes = "1.0"
-# http-body-util = "0.1"
+rmcp = { version = "0.1.5", features = [
+    "client",
+    "transport-sse",
+    "transport-child-process",
+] }
+hyper = { version = "1.0", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] }
+hyper-tls = "0.6"
+bytes = "1.0"
+http-body-util = "0.1"
 lazy_static = "1.4"
 dirs = "5.0"
 
