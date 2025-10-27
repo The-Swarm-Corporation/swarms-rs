@@ -51,7 +51,7 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] 
 hyper-tls = "0.6"
 bytes = "1.0"
 http-body-util = "0.1"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 
 # macro
 swarms-macro = { version = "0.1.0", path = "../swarms-macro" }
