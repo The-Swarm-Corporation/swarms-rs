@@ -66,27 +66,35 @@ for (i, agent) in agents.into_iter().enumerate() {
 ### Core Components
 
 #### `AgentPool<T>`
+
 The main pool manager that handles:
+
 - Agent lifecycle management
 - Availability tracking
 - Metrics collection
 - Thread-safe operations
 
 #### `PooledAgent<T>`
+
 An RAII guard that ensures agents are returned to the pool:
+
 - Implements `Deref` and `DerefMut` for transparent agent access
 - Automatically returns agent to pool on drop
 - Prevents accidental agent loss
 
 #### `PoolConfig`
+
 Configuration structure for pool behavior:
+
 - `max_size`: Maximum agents in pool
 - `min_size`: Minimum agents to maintain
 - `enable_metrics`: Track performance metrics
 - `acquire_timeout_ms`: Timeout for acquiring agents
 
 #### `PoolMetrics`
+
 Performance and utilization metrics:
+
 - `total_created`: Agents ever created
 - `available_count`: Current available agents
 - `in_use_count`: Agents currently in use
@@ -95,6 +103,7 @@ Performance and utilization metrics:
 ### Thread Safety
 
 The pool uses `Arc<Mutex<>>` for thread-safe operation:
+
 - Multiple threads can safely acquire agents
 - Metrics are collected atomically
 - No data races or deadlocks
@@ -190,19 +199,20 @@ let pool = AgentPool::with_config(config, factory);
 
 ### Configuration Guidelines
 
-| Use Case | max_size | min_size | timeout_ms |
-|----------|----------|----------|-----------|
-| Light load | 10-20 | 2-5 | 5000 |
-| Moderate load | 50-100 | 20-30 | 3000 |
-| Heavy load | 200-500 | 50-100 | 1000 |
-| Batch processing | 100-200 | 50 | 10000 |
-| Real-time systems | 50-100 | 25-50 | 500 |
+| Use Case          | max_size | min_size | timeout_ms |
+| ----------------- | -------- | -------- | ---------- |
+| Light load        | 10-20    | 2-5      | 5000       |
+| Moderate load     | 50-100   | 20-30    | 3000       |
+| Heavy load        | 200-500  | 50-100   | 1000       |
+| Batch processing  | 100-200  | 50       | 10000      |
+| Real-time systems | 50-100   | 25-50    | 500        |
 
 ## Performance Characteristics
 
 ### Allocation Overhead Reduction
 
 **Without Pooling:**
+
 ```
 Create Agent 1: 50μs
 Create Agent 2: 50μs
@@ -211,6 +221,7 @@ Total: 150μs
 ```
 
 **With Pooling (after warm-up):**
+
 ```
 Acquire Agent 1: 1μs (from pool)
 Acquire Agent 2: 1μs (from pool)
@@ -222,8 +233,8 @@ Total: 3μs
 
 ### Memory Efficiency
 
-- **Peak Memory**: Without pooling = O(max_concurrent * agent_size)
-- **With Pooling**: O(pool_size * agent_size)
+- **Peak Memory**: Without pooling = O(max_concurrent \* agent_size)
+- **With Pooling**: O(pool_size \* agent_size)
 - **Savings**: Prevents allocation spikes, better memory layout
 
 ### Performance Metrics
@@ -330,7 +341,7 @@ impl SmartFactory {
         )
         .system_prompt(&self.config.system_prompt)
         .build();
-        
+
         self.metrics.increment_created();
         agent
     }
@@ -347,12 +358,12 @@ let pool = AgentPool::new(50, factory);
 pub async fn shutdown_pool(pool: AgentPool<Agent>) {
     // Prevent new acquisitions
     pool.close().await;
-    
+
     // Wait for in-flight operations to complete
     while pool.metrics().in_use_count > 0 {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    
+
     // Pool is now safe to drop
 }
 ```
@@ -363,7 +374,7 @@ pub async fn shutdown_pool(pool: AgentPool<Agent>) {
 // Export metrics to monitoring system
 async fn report_metrics(pool: &AgentPool<Agent>) {
     let metrics = pool.metrics();
-    
+
     metrics_registry.gauge("agent_pool_available", metrics.available_count);
     metrics_registry.gauge("agent_pool_in_use", metrics.in_use_count);
     metrics_registry.counter("agent_pool_acquires", metrics.acquire_success);
@@ -399,11 +410,13 @@ async fn test_with_agent_pool() {
 ### Problem: Frequent Timeouts
 
 **Symptoms:**
+
 ```
 PoolError::Timeout occurring frequently
 ```
 
 **Solutions:**
+
 1. Increase `max_size` in configuration
 2. Check if agent operations are taking too long
 3. Increase `acquire_timeout_ms`
@@ -420,12 +433,14 @@ let config = PoolConfig {
 ### Problem: High Memory Usage
 
 **Symptoms:**
+
 ```
 Memory grows unbounded
 Metrics show available_count very high
 ```
 
 **Solutions:**
+
 1. Reduce `max_size` to prevent over-allocation
 2. Check for agents holding large resources
 3. Add cleanup logic to agent factory
@@ -441,12 +456,14 @@ let config = PoolConfig {
 ### Problem: Pool Contention
 
 **Symptoms:**
+
 ```
 High CPU usage when acquiring agents
 Slow acquire() calls under load
 ```
 
 **Solutions:**
+
 1. Profile lock contention with perf tools
 2. Consider using multiple pools for different agent types
 3. Increase pool size to reduce contention
@@ -460,12 +477,14 @@ let powerful_pool = AgentPool::new(20, create_powerful_agent);
 ### Problem: Agents Not Being Reused
 
 **Symptoms:**
+
 ```
 metrics.total_created keeps increasing
 Frequent agent creation despite pool
 ```
 
 **Solutions:**
+
 1. Check that agents are being returned (dropped) properly
 2. Verify RAII guard is being used correctly
 3. Check for exceptions preventing drop
@@ -507,12 +526,14 @@ Agent object pooling provides significant performance improvements for applicati
 - **Flexible** configuration for different workloads
 
 Use pools for:
+
 - Batch processing scenarios
 - High-frequency request handling
 - Testing with many agent instances
 - Performance-critical applications
 
 Consider alternatives if:
+
 - Agents are long-lived (low creation rate)
 - Memory is extremely constrained
 - Agent creation is not a bottleneck
