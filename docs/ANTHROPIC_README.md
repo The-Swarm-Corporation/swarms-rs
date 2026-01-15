@@ -17,7 +17,6 @@ export ANTHROPIC_BASE_URL="https://api.anthropic.com"
 ### 2. Basic Usage
 
 ```rust
-use swarms_rs::agent::SwarmsAgentBuilder;
 use swarms_rs::llm::provider::anthropic::Anthropic;
 
 #[tokio::main]
@@ -25,8 +24,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create Anthropic client from environment
     let model = Anthropic::from_env();
 
-    // Build agent with Claude
-    let agent = SwarmsAgentBuilder::new_with_model(model)
+    // Build agent with Claude (convenience builder)
+    let agent = model
+        .agent_builder()
         .agent_name("ClaudeAssistant")
         .system_prompt("You are Claude, a helpful AI assistant created by Anthropic.")
         .max_loops(3)
@@ -53,13 +53,13 @@ cargo run --example anthropic_claude_agent -- --help
 
 ## 🧠 Available Claude Models
 
-| Model | Context Window | Description | Best For |
-|-------|----------------|-------------|----------|
-| `claude-3-5-sonnet-20241022` | 200K | Most intelligent model | Complex analysis, creative tasks |
-| `claude-3-5-haiku-20241022` | 200K | Fast and efficient | Quick responses, simple tasks |
-| `claude-3-opus-20240229` | 200K | Most powerful model | Maximum intelligence required |
-| `claude-3-sonnet-20240229` | 200K | Balanced performance | General purpose |
-| `claude-3-haiku-20240307` | 200K | Fastest model | High-throughput applications |
+| Model                        | Context Window | Description            | Best For                         |
+| ---------------------------- | -------------- | ---------------------- | -------------------------------- |
+| `claude-3-5-sonnet-20241022` | 200K           | Most intelligent model | Complex analysis, creative tasks |
+| `claude-3-5-haiku-20241022`  | 200K           | Fast and efficient     | Quick responses, simple tasks    |
+| `claude-3-opus-20240229`     | 200K           | Most powerful model    | Maximum intelligence required    |
+| `claude-3-sonnet-20240229`   | 200K           | Balanced performance   | General purpose                  |
+| `claude-3-haiku-20240307`    | 200K           | Fastest model          | High-throughput applications     |
 
 ### Model Selection Examples
 
@@ -79,10 +79,12 @@ let opus_model = Anthropic::from_env_with_model("claude-3-opus-20240229");
 ### Custom Agent Configuration
 
 ```rust
-use swarms_rs::agent::SwarmsAgentBuilder;
 use swarms_rs::llm::provider::anthropic::Anthropic;
 
-let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
+let model = Anthropic::from_env();
+
+let agent = model
+    .agent_builder()
     .agent_name("AdvancedClaude")
     .system_prompt("You are an advanced AI assistant with expertise in multiple domains.")
     .max_loops(5)
@@ -136,7 +138,8 @@ impl swarms_rs::structs::tool::ToolDyn for CalculatorTool {
 }
 
 // Use with agent
-let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
+let agent = Anthropic::from_env()
+    .agent_builder()
     .add_tool(CalculatorTool)
     .system_prompt("You can use the calculator tool for mathematical computations.")
     .build();
@@ -174,7 +177,8 @@ for (model_name, description) in models {
     let start = Instant::now();
     let model = Anthropic::from_env().set_model(model_name);
 
-    let agent = SwarmsAgentBuilder::new_with_model(model)
+    let agent = model
+        .agent_builder()
         .max_loops(1)
         .verbose(false)
         .build();
@@ -191,6 +195,7 @@ for (model_name, description) in models {
 The provider includes comprehensive error handling:
 
 ### API Errors
+
 ```rust
 match agent.run(task).await {
     Ok(response) => println!("Success: {}", response),
@@ -245,7 +250,8 @@ mod tests {
 ### Enable Verbose Logging
 
 ```rust
-let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
+let agent = Anthropic::from_env()
+    .agent_builder()
     .verbose(true)  // Enable detailed logging
     .build();
 ```
@@ -255,7 +261,8 @@ let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
 ```rust
 use swarms_rs::logging;
 
-let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
+let agent = Anthropic::from_env()
+    .agent_builder()
     .verbose(true)
     .build();
 

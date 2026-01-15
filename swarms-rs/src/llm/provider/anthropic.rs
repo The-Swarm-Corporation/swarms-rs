@@ -196,6 +196,7 @@ use hyper_util::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::agent::SwarmsAgentBuilder;
 use crate::llm::{
     self, CompletionError, Model,
     request::{CompletionRequest, CompletionResponse},
@@ -327,6 +328,11 @@ impl Anthropic {
     /// Get a reference to the current model name
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// Convenience: create a `SwarmsAgentBuilder` from this Anthropic client
+    pub fn agent_builder(&self) -> SwarmsAgentBuilder<Self> {
+        SwarmsAgentBuilder::new_with_model(self.clone())
     }
 
     /// Helper function to create Anthropic client with cached fields for performance

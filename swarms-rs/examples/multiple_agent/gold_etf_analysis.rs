@@ -303,7 +303,7 @@ async fn main() -> Result<()> {
     let anthropic_client = Anthropic::from_env_with_model("claude-3-5-haiku-20241022");
 
     // Create specialized financial analysis agents (without tools)
-    let technical_analysis_agent = SwarmsAgentBuilder::new_with_model(anthropic_client.clone())
+    let technical_analysis_agent = anthropic_client.clone().agent_builder()
         .agent_name("Technical Analysis Agent")
         .system_prompt(
             "You are a technical analysis specialist for ETFs and stocks. Your role is to analyze \
@@ -319,7 +319,7 @@ async fn main() -> Result<()> {
         .add_stop_word("<DONE>")
         .build();
 
-    let fundamental_analysis_agent = SwarmsAgentBuilder::new_with_model(anthropic_client.clone())
+    let fundamental_analysis_agent = anthropic_client.clone().agent_builder()
         .agent_name("Fundamental Analysis Agent")
         .system_prompt(
             "You are a fundamental analysis specialist for ETFs and stocks. Your role is to analyze \
@@ -335,7 +335,7 @@ async fn main() -> Result<()> {
         .add_stop_word("<DONE>")
         .build();
 
-    let market_sentiment_agent = SwarmsAgentBuilder::new_with_model(anthropic_client.clone())
+    let market_sentiment_agent = anthropic_client.clone().agent_builder()
         .agent_name("Market Sentiment Agent")
         .system_prompt(
             "You are a market sentiment specialist for ETFs and stocks. Your role is to analyze \
