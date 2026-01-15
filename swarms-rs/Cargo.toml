@@ -78,6 +78,10 @@ harness = false
 name = "agent_initialization_benchmarks"
 harness = false
 
+[[bench]]
+name = "agent_pool_benchmarks"
+harness = false
+
 
 [[example]]
 name = "logging_example"
@@ -98,3 +102,7 @@ path = "examples/multiple_agent/swarm_router.rs"
 [[example]]
 name = "pretty_print_example"
 path = "examples/single_agent/pretty_print_example.rs"
+
+[[example]]
+name = "agent_pool_example"
+path = "examples/agent_pool_example.rs"
