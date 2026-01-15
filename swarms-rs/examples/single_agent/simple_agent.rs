@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
         .context("OPENAI_API_KEY environment variable not set. Please set it in your .env file or environment.")?;
 
     // Create OpenAI client with error handling
-    let client = OpenAI::new(api_key).set_model("gpt-4o-mini");
+    let client = OpenAI::new(api_key).set_model("");
 
     // Build agent with error handling
     let agent = client

@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
 
     // Initialize OpenAI client
     let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
-    let client = OpenAI::from_url("https://api.openai.com/v1", &api_key).set_model("gpt-4o-mini");
+    let client = OpenAI::from_url("https://api.openai.com/v1", &api_key).set_model("");
 
     // Create agent with pretty printing enabled
     let agent = SwarmsAgentBuilder::new_with_model(client)

@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
     // Initialize OpenAI client
     let api_key = env::var("OPENAI_API_KEY").unwrap();
-    let client = OpenAI::from_url("https://api.openai.com/v1", &api_key).set_model("gpt-4o-mini");
+    let client = OpenAI::from_url("https://api.openai.com/v1", &api_key).set_model("");
 
     // Example 1: Sequential Workflow for Research Analysis
     println!("\n=== Running Sequential Workflow Example ===\n");

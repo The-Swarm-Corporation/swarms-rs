@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "demo-key".to_string()
     });
 
-    let model = OpenAI::new(api_key).set_model("gpt-4o-mini");
+    let model = OpenAI::new(api_key).set_model("");
 
     // Create agent configuration with logging-friendly settings
     let config = AgentConfig::builder()

@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logger();
 
     let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env_with_model(
-        "claude-3-5-haiku-20241022",
+        "",
     ))
     .agent_name("ClaudeTestAgent")
     .system_prompt("You are Claude, a helpful AI assistant. Keep responses brief and clear.")

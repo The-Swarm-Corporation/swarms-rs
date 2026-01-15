@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     let base_url = env::var("DEEPSEEK_BASE_URL").unwrap();
     let api_key = env::var("DEEPSEEK_API_KEY").unwrap();
-    let client = OpenAI::from_url(base_url, api_key).set_model("deepseek-chat");
+    let client = OpenAI::from_url(base_url, api_key).set_model("");
     let agent = client
         .agent_builder()
         .system_prompt("You need to select the right tool to answer the question.")
