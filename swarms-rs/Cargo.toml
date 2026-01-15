@@ -98,3 +98,11 @@ path = "examples/multiple_agent/swarm_router.rs"
 [[example]]
 name = "pretty_print_example"
 path = "examples/single_agent/pretty_print_example.rs"
+
+[[example]]
+name = "openrouter_agent"
+path = "examples/single_agent/openrouter_agent.rs"
+
+[[example]]
+name = "openrouter_advanced"
+path = "examples/single_agent/openrouter_advanced.rs"
