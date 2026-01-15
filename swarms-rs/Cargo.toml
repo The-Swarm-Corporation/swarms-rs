@@ -88,6 +88,10 @@ name = "anthropic_claude_agent"
 path = "examples/single_agent/anthropic_claude_agent.rs"
 
 [[example]]
+name = "anthropic_tools_example"
+path = "examples/single_agent/anthropic_tools_example.rs"
+
+[[example]]
 name = "gold_etf_analysis"
 path = "examples/multiple_agent/gold_etf_analysis.rs"
 

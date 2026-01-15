@@ -106,15 +106,20 @@ RUST_LOG=debug
 
 SWARMS_LOG_LEVEL=DEBUG 
 
+# OpenAI Configuration
 OPENAI_API_KEY=your_openai_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 
-# Or for DeepSeek
+# DeepSeek Configuration
 DEEPSEEK_API_KEY="your_deepseek_key_here"
 DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"
 
-ANTHROPIC_API_KEY=""
+# Anthropic Configuration
+ANTHROPIC_API_KEY="your_anthropic_key_here"
+ANTHROPIC_BASE_URL="https://api.anthropic.com"
 ```
+
+See [Anthropic Usage Guide](docs/ANTHROPIC_USAGE.md) for detailed configuration and examples.
 
 ------------
 
@@ -189,6 +194,48 @@ async fn main() -> Result<()> {
 }
 
 ```
+
+--------
+
+### Anthropic Claude Support
+
+`swarms-rs` provides first-class support for Anthropic's Claude models. Here's a quick example:
+
+```rust
+use swarms_rs::agent::SwarmsAgentBuilder;
+use swarms_rs::llm::provider::anthropic::Anthropic;
+use swarms_rs::structs::agent::Agent;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv::dotenv().ok();
+
+    let agent = SwarmsAgentBuilder::new_with_model(
+        Anthropic::from_env_with_model("claude-3-5-sonnet-20241022")
+    )
+    .agent_name("ClaudeAssistant")
+    .system_prompt("You are a helpful AI assistant powered by Claude.")
+    .max_loops(1)
+    .temperature(0.7)
+    .build();
+
+    let response = agent
+        .run("Hello, Claude! Tell me about your capabilities.".to_string())
+        .await?;
+
+    println!("Response: {}", response);
+    Ok(())
+}
+```
+
+**Features:**
+- Support for all Claude models (Sonnet, Haiku, Opus)
+- Tool integration and function calling
+- System prompts and chat history
+- Temperature and token configuration
+- Comprehensive error handling
+
+For detailed setup and advanced examples, see the [Anthropic Usage Guide](docs/ANTHROPIC_USAGE.md).
 
 --------
 
