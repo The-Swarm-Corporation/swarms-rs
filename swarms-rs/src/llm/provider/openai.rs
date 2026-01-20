@@ -478,14 +478,20 @@ impl From<async_openai::types::CreateChatCompletionResponse>
             .flat_map(|choice| {
                 let content = choice.message.content.to_owned();
                 let tool_calls = choice.message.tool_calls.to_owned();
-                // OpenAI should always return content or tool_calls
-                if tool_calls.is_none() {
-                    let content =
-                        content.expect("OpenAI should always return content or tool_calls");
-                    vec![llm::completion::AssistantContent::text(content)]
+
+                // Check if tool_calls has actual calls (some providers like DeepInfra return empty array instead of None)
+                let has_tool_calls = tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+
+                if !has_tool_calls {
+                    // Return text content if no tool calls
+                    if let Some(content) = content {
+                        vec![llm::completion::AssistantContent::text(content)]
+                    } else {
+                        vec![]
+                    }
                 } else {
-                    let tool_calls = tool_calls.expect("We just checked that it is not None");
-                    let tool_calls = tool_calls
+                    let tool_calls = tool_calls.expect("We just checked that it is not empty");
+                    tool_calls
                         .iter()
                         .map(|tool_call| {
                             llm::completion::AssistantContent::tool_call(
@@ -495,8 +501,7 @@ impl From<async_openai::types::CreateChatCompletionResponse>
                                     .expect("OpenAI return invalid json"),
                             )
                         })
-                        .collect::<Vec<_>>();
-                    tool_calls
+                        .collect::<Vec<_>>()
                 }
             })
             .collect::<Vec<_>>();
