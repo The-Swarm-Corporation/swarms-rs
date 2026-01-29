@@ -1,4 +1,5 @@
 use crate::structs::persistence;
+use crate::structs::conversation::AgentConversation;
 use crate::structs::tool::ToolError;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,9 @@ pub enum AgentError {
     ToolNotFound(String),
     #[error("Tool error: {0}")]
     ToolError(#[from] ToolError),
+
+    #[error("Task not found: {0}")]
+    TaskNotFound(String),
 
     #[cfg(test)]
     #[error("Test error")]
@@ -250,6 +254,15 @@ impl Default for AgentConfig {
     }
 }
 
+/// Package used to transfer a task's short-term state between agents.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentHandoff {
+    pub task: String,
+    pub conversation: AgentConversation,
+    pub from_agent_id: String,
+    pub from_agent_name: String,
+}
+
 pub trait Agent: Send + Sync {
     /// Runs the autonomous agent loop to complete the given task.
     fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>>;
@@ -268,6 +281,18 @@ pub trait Agent: Send + Sync {
 
     /// Save the agent state to a file
     fn save_task_state(&self, task: String) -> BoxFuture<Result<(), AgentError>>;
+
+    /// Export a handoff package for the specified task, allowing transfer
+    /// of the task's short-term conversation to another agent.
+    fn export_handoff(&self, _task: String) -> BoxFuture<Result<AgentHandoff, AgentError>> {
+        Box::pin(async move { Err(AgentError::TaskNotFound("unsupported".to_string())) })
+    }
+
+    /// Import a handoff package into this agent, restoring the short-term
+    /// conversation for continued execution.
+    fn import_handoff(&self, _handoff: AgentHandoff) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async move { Ok(()) })
+    }
 
     /// Check a response to determine if it is complete
     fn is_response_complete(&self, response: String) -> bool;

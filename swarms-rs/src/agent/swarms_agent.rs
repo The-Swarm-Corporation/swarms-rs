@@ -1578,6 +1578,28 @@ where
         })
     }
 
+    fn export_handoff(&self, task: String) -> BoxFuture<Result<crate::structs::agent::AgentHandoff, AgentError>> {
+        // Synchronously gather the conversation and return as a future
+        let conv_opt = self.short_memory.0.get(&task);
+        if let Some(conv) = conv_opt {
+            let handoff = crate::structs::agent::AgentHandoff {
+                task: task.clone(),
+                conversation: conv.clone(),
+                from_agent_id: self.config.id.clone(),
+                from_agent_name: self.config.name.clone(),
+            };
+            Box::pin(async move { Ok(handoff) })
+        } else {
+            Box::pin(async move { Err(AgentError::TaskNotFound(task)) })
+        }
+    }
+
+    fn import_handoff(&self, handoff: crate::structs::agent::AgentHandoff) -> BoxFuture<Result<(), AgentError>> {
+        // Perform insertion synchronously to avoid borrowing across await points
+        self.short_memory.0.insert(handoff.task.clone(), handoff.conversation);
+        Box::pin(async move { Ok(()) })
+    }
+
     fn is_response_complete(&self, response: String) -> bool {
         self.config
             .stop_words
