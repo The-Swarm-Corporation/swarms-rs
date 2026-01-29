@@ -176,6 +176,8 @@ where
     tools: Vec<ToolDefinition>,
     /// Implementation instances of tools, keyed by tool name
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
+    /// Registered sub-agents keyed by name
+    sub_agents: DashMap<String, Arc<dyn Agent>>,
 }
 
 impl<M> SwarmsAgentBuilder<M>
@@ -211,6 +213,7 @@ where
             system_prompt: None,
             tools: vec![],
             tools_impl: DashMap::new(),
+            sub_agents: DashMap::new(),
         }
     }
 
@@ -356,6 +359,15 @@ where
         self.tools.push(tool.definition());
         self.tools_impl
             .insert(tool.name().to_string(), Arc::new(tool) as Arc<dyn ToolDyn>);
+        self
+    }
+
+    /// Register a sub-agent under a given name. Sub-agents can be delegated tasks
+    /// and are stored internally as `Arc<dyn Agent>`.
+    pub fn add_sub_agent<T: Agent + 'static>(mut self, name: impl Into<String>, agent: T) -> Self {
+        let name = name.into();
+        self.sub_agents
+            .insert(name, Arc::from(Box::new(agent) as Box<dyn Agent>));
         self
     }
 
@@ -510,6 +522,7 @@ where
             short_memory: AgentShortMemory::new(),
             tools: self.tools.clone(),
             tools_impl: self.tools_impl,
+            sub_agents: self.sub_agents,
         };
 
         if agent.config.verbose && log::log_enabled!(log::Level::Info) {
@@ -783,6 +796,9 @@ where
     /// Tool implementation instances (not serialized)
     #[serde(skip)]
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
+    /// Registered sub-agents (not serialized)
+    #[serde(skip)]
+    sub_agents: DashMap<String, Arc<dyn Agent>>,
 }
 
 impl<M> SwarmsAgent<M>
@@ -885,6 +901,7 @@ where
             short_memory: AgentShortMemory::new(),
             tools: vec![],
             tools_impl: DashMap::new(),
+            sub_agents: DashMap::new(),
         }
     }
 
@@ -1112,6 +1129,31 @@ where
         self.tools.push(definition);
         self.tools_impl.insert(toolname, Arc::new(tool));
         self
+    }
+
+    /// Register a sub-agent at runtime. This lets a parent agent delegate tasks
+    /// to specialized sub-agents by name.
+    pub fn register_sub_agent<T: Agent + 'static>(&self, name: impl Into<String>, agent: T) {
+        let name = name.into();
+        self.sub_agents
+            .insert(name, Arc::from(Box::new(agent) as Box<dyn Agent>));
+    }
+
+    /// Retrieve a registered sub-agent by name.
+    pub fn get_sub_agent(&self, name: &str) -> Option<Arc<dyn Agent>> {
+        self.sub_agents.get(name).map(|r| r.value().clone())
+    }
+
+    /// Delegate a task to a named sub-agent. Returns the sub-agent's run future
+    /// or an `AgentError::AgentNotFound` if missing.
+    pub fn delegate_to_sub_agent(&self, name: impl Into<String>, task: String) -> BoxFuture<Result<String, AgentError>> {
+        let name = name.into();
+        if let Some(entry) = self.sub_agents.get(&name) {
+            let sub_agent = entry.value().clone();
+            return sub_agent.run(task);
+        }
+
+        Box::pin(async move { Err(AgentError::AgentNotFound(name)) })
     }
 
     pub fn system_prompt(mut self, system_prompt: impl Into<String>) -> Self {

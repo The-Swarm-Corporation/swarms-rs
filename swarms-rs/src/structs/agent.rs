@@ -28,6 +28,8 @@ pub enum AgentError {
     NoChoiceFound,
     #[error("Tool {0} not found")]
     ToolNotFound(String),
+    #[error("Agent {0} not found")]
+    AgentNotFound(String),
     #[error("Tool error: {0}")]
     ToolError(#[from] ToolError),
 
