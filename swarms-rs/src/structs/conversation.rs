@@ -7,6 +7,7 @@ use std::{
 use chrono::Local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use thiserror::Error;
 
 use crate::structs::persistence::{self, PersistenceError};
@@ -40,6 +41,21 @@ impl AgentShortMemory {
             .entry(task.into())
             .or_insert(AgentConversation::new(conversation_owner.into()));
         conversation.add(role, message.into())
+    }
+
+    /// Add a message with structured `Content` (e.g. JSON) to the conversation.
+    pub fn add_content(
+        &self,
+        task: impl Into<String>,
+        conversation_owner: impl Into<String>,
+        role: Role,
+        content: Content,
+    ) {
+        let mut conversation = self
+            .0
+            .entry(task.into())
+            .or_insert(AgentConversation::new(conversation_owner.into()));
+        conversation.add_content(role, content)
     }
 }
 
@@ -91,6 +107,36 @@ impl AgentConversation {
         let message = Message {
             role,
             content: Content::Text(format!("Timestamp(millis): {timestamp} \n{message}")),
+        };
+        self.history.push(message);
+
+        if let Some(filepath) = &self.save_filepath {
+            let filepath = filepath.clone();
+            let history = self.history.clone();
+            tokio::spawn(async move {
+                let history = history;
+                let _ = Self::save_as_json(&filepath, &history).await;
+            });
+        }
+    }
+
+    /// Add a message with structured `Content` to the conversation history.
+    pub fn add_content(&mut self, role: Role, content: Content) {
+        // Only check message limit if it's set
+        if let Some(max) = self.max_messages {
+            if self.history.len() >= max {
+                self.history.drain(0..(self.history.len() - max + 1));
+            }
+        }
+
+        let timestamp = Local::now().timestamp_millis();
+        let message = match content {
+            Content::Text(mut t) => {
+                // Prepend timestamp like the text path does
+                t = format!("Timestamp(millis): {timestamp} \n{t}");
+                Message { role, content: Content::Text(t) }
+            }
+            other => Message { role, content: other },
         };
         self.history.push(message);
 
