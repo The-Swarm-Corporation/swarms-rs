@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, hash_map},
-    sync::Arc,
+    sync::{Arc, atomic::{AtomicUsize, Ordering}},
     time::Duration,
 };
 
@@ -12,7 +12,7 @@ use petgraph::{
     visit::EdgeRef,
 };
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, Notify};
 
 use crate::structs::agent::Agent;
 
@@ -233,30 +233,148 @@ impl DAGWorkflow {
             GraphWorkflowError::AgentNotFound(format!("Start agent '{}' not found", start_agent))
         })?;
 
-        // Reset all results
+        // Reset cached last results
         let node_idxs = self.workflow.node_indices().collect::<Vec<_>>();
-        for idx in node_idxs {
-            if let Some(node_weight) = self.workflow.node_weight_mut(idx) {
+        for idx in node_idxs.iter() {
+            if let Some(node_weight) = self.workflow.node_weight_mut(*idx) {
                 let mut last_result = node_weight.last_result.lock().await;
                 *last_result = None;
             }
         }
 
-        // Create a shared results map for all agents to write to
+        // Shared maps
         let results = Arc::new(DashMap::new());
-        // Create a shared tracking state for the entire workflow
-        let edge_tracker = Arc::new(DashMap::new());
-        let processed_nodes = Arc::new(DashMap::new());
-        // Execute the workflow
-        self.execute_node(
-            *start_idx,
-            input,
-            Arc::clone(&results),
-            edge_tracker,
-            processed_nodes,
-        )
-        .await?;
-        Ok(Arc::into_inner(results).expect("Results should not be poisoned"))
+        let inputs_map: Arc<DashMap<NodeIndex, Vec<String>>> = Arc::new(DashMap::new());
+
+        // Compute incoming counts
+        let mut incoming_count: HashMap<NodeIndex, Arc<AtomicUsize>> = HashMap::new();
+        for idx in self.workflow.node_indices() {
+            let count = self
+                .workflow
+                .edges_directed(idx, Direction::Incoming)
+                .count();
+            incoming_count.insert(idx, Arc::new(AtomicUsize::new(count)));
+        }
+
+        // Channel for scheduling ready nodes
+        let (tx, mut rx) = mpsc::unbounded_channel::<NodeIndex>();
+
+        // Notify when all tasks complete
+        let notify = Arc::new(Notify::new());
+        let active_tasks = Arc::new(AtomicUsize::new(0));
+
+        // Helper to schedule a node for execution once ready
+        let schedule_exec = |idx: NodeIndex, tx: &mpsc::UnboundedSender<NodeIndex>| {
+            let _ = tx.send(idx);
+        };
+
+        // Start by pushing the start node input and forcing it ready
+        inputs_map.entry(*start_idx).or_default().push(input.clone());
+        // If start node has incoming edges, we still want to execute it first
+        // so we set its incoming count to 0 so it becomes ready
+        if let Some(cnt) = incoming_count.get(start_idx) {
+            cnt.store(0, Ordering::SeqCst);
+        }
+
+        // Seed ready nodes (those with zero incoming)
+        for (node_idx, cnt) in incoming_count.iter() {
+            if cnt.load(Ordering::SeqCst) == 0 {
+                schedule_exec(*node_idx, &tx);
+            }
+        }
+
+        // Worker loop: process nodes as they become ready
+        let wf = &self.workflow;
+        let agents = &self.agents;
+        let results_clone = Arc::clone(&results);
+        let inputs_clone = Arc::clone(&inputs_map);
+        let incoming_clone = incoming_count.clone();
+        let notify_c = Arc::clone(&notify);
+        let active_c = Arc::clone(&active_tasks);
+
+        // Consume ready nodes and execute them concurrently. We collect the
+        // minimal metadata (agent name and outgoing edges) synchronously from
+        // the borrowed graph and then spawn tasks that only own cloned data.
+        while let Some(node_idx) = rx.recv().await {
+            active_tasks.fetch_add(1, Ordering::SeqCst);
+
+            // Aggregate inputs for this node
+            let mut aggregated = String::new();
+            if let Some(bundle) = inputs_clone.get(&node_idx) {
+                for val in bundle.iter() {
+                    aggregated.push_str(val);
+                    aggregated.push('\n');
+                }
+            }
+
+            // Snapshot agent name and outgoing edges (clone Flow for each edge)
+            if let Some(node_weight) = self.workflow.node_weight(node_idx) {
+                let agent_name = node_weight.name.clone();
+
+                let mut outgoing: Vec<(NodeIndex, Flow)> = Vec::new();
+                for edge in self.workflow.edges_directed(node_idx, Direction::Outgoing) {
+                    outgoing.push((edge.target(), edge.weight().clone()));
+                }
+
+                let agents = self.agents.clone();
+                let results = Arc::clone(&results_clone);
+                let inputs_map = Arc::clone(&inputs_clone);
+                let incoming_map = incoming_clone.clone();
+                let tx_clone = tx.clone();
+                let notify_inner = Arc::clone(&notify_c);
+                let active_inner = Arc::clone(&active_c);
+
+                tokio::spawn(async move {
+                    // Execute agent with timeout
+                    let exec_res = tokio::time::timeout(
+                        Duration::from_secs(300),
+                        async {
+                            if let Some(agent) = agents.get(&agent_name) {
+                                agent.run(aggregated.clone()).await.map_err(|e| GraphWorkflowError::AgentError(e.to_string()))
+                            } else {
+                                Err(GraphWorkflowError::AgentNotFound(agent_name.clone()))
+                            }
+                        },
+                    ).await.map_err(|_| GraphWorkflowError::Timeout(agent_name.clone()));
+
+                    // store result
+                    results.entry(agent_name.clone()).or_insert_with(|| exec_res.clone());
+
+                    // propagate on success
+                    if let Ok(Ok(output)) = &exec_res {
+                        for (target, flow) in outgoing.into_iter() {
+                            if flow.condition.as_ref().map(|c| c(output)).unwrap_or(true) {
+                                let next_input = flow.transform.as_ref().map_or_else(|| output.clone(), |t| t(output.clone()));
+                                inputs_map.entry(target).or_default().push(next_input.clone());
+
+                                if let Some(cnt) = incoming_map.get(&target) {
+                                    let prev = cnt.fetch_sub(1, Ordering::SeqCst);
+                                    if prev == 1 {
+                                        let _ = tx_clone.send(target);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if active_inner.fetch_sub(1, Ordering::SeqCst) == 1 {
+                        notify_inner.notify_one();
+                    }
+                });
+            } else {
+                // Node disappeared unexpectedly; decrement active count
+                if active_tasks.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    notify.notify_one();
+                }
+            }
+        }
+
+        // Wait until all active tasks are done
+        if active_tasks.load(Ordering::SeqCst) > 0 {
+            notify.notified().await;
+        }
+
+        Ok(Arc::into_inner(results).unwrap_or_else(|arc| (*arc).clone()))
     }
 
     pub async fn execute_node(
@@ -570,6 +688,41 @@ impl DAGWorkflow {
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 pub struct Flow {
+    /// Optional transformation function to apply to the output before passing to the next agent
+    pub transform: Option<Arc<dyn Fn(String) -> String + Send + Sync>>,
+    /// Optional condition to determine if this flow should be taken
+    pub condition: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+}
+
+/// Node weight for the graph
+#[derive(Debug)]
+pub struct AgentNode {
+    pub name: String,
+    /// Cache for execution results
+    pub last_result: Mutex<Option<Result<String, GraphWorkflowError>>>,
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum GraphWorkflowError {
+    #[error("Agent Error: {0}")]
+    AgentError(String),
+    #[error("Agent not found: {0}")]
+    AgentNotFound(String),
+    #[error("Cycle detected in workflow")]
+    CycleDetected,
+    #[error("Timeout executing agent: {0}")]
+    Timeout(String),
+    #[error("Deadlock detected in workflow execution")]
+    Deadlock,
+    #[error("Workflow execution canceled")]
+    Canceled,
+}
+
+fn sanitize_id(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
     /// Optional transformation function to apply to the output before passing to the next agent
     pub transform: Option<Arc<dyn Fn(String) -> String + Send + Sync>>,
     /// Optional condition to determine if this flow should be taken
