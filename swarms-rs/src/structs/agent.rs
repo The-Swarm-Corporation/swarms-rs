@@ -1,6 +1,8 @@
 use crate::structs::persistence;
 use crate::structs::tool::ToolError;
 use futures::future::BoxFuture;
+use futures::stream::BoxStream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -253,6 +255,15 @@ impl Default for AgentConfig {
 pub trait Agent: Send + Sync {
     /// Runs the autonomous agent loop to complete the given task.
     fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>>;
+
+    /// Stream partial or incremental results for the given task.
+    ///
+    /// Default implementation wraps `run` into a single-item stream so
+    /// existing implementors remain compatible.
+    fn run_stream(&self, task: String) -> BoxStream<'static, Result<String, AgentError>> {
+        let fut = self.run(task);
+        futures::stream::once(fut).boxed()
+    }
 
     /// Run multiple tasks concurrently
     fn run_multiple_tasks(

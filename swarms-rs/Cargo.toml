@@ -98,3 +98,7 @@ path = "examples/multiple_agent/swarm_router.rs"
 [[example]]
 name = "pretty_print_example"
 path = "examples/single_agent/pretty_print_example.rs"
+
+[[example]]
+name = "streaming_agent"
+path = "examples/single_agent/streaming_agent.rs"
