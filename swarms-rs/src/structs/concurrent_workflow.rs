@@ -217,7 +217,7 @@ impl Swarm for ConcurrentWorkflow {
         &self.name
     }
 
-    fn run(&self, task: String) -> BoxFuture<Result<Box<dyn erased_serde::Serialize>, SwarmError>> {
+    fn run(&self, task: String) -> BoxFuture<'_, Result<Box<dyn erased_serde::Serialize>, SwarmError>> {
         Box::pin(async move {
             self.run(task)
                 .await

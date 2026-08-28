@@ -1146,7 +1146,7 @@ where
     M: llm::Model + Clone + Send + Sync + 'static,
     M::RawCompletionResponse: Clone + Send + Sync,
 {
-    fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>> {
+    fn run(&self, task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         Box::pin(async move {
             let start_time = std::time::Instant::now();
 
@@ -1497,7 +1497,7 @@ where
     fn run_multiple_tasks(
         &mut self,
         tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>> {
         let agent_name = self.name();
         let mut results = Vec::with_capacity(tasks.len());
 
@@ -1531,7 +1531,7 @@ where
         })
     }
 
-    fn plan(&self, task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn plan(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async move {
             if let Some(planning_prompt) = &self.config.planning_prompt {
                 let planning_prompt = format!("{} {}", planning_prompt, task);
@@ -1549,11 +1549,11 @@ where
         })
     }
 
-    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         unimplemented!("query_long_term_memory not implemented")
     }
 
-    fn save_task_state(&self, task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn save_task_state(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         let mut hasher = XxHash64::default();
         task.hash(&mut hasher);
         let task_hash = hasher.finish();
