@@ -3,6 +3,7 @@ pub mod concurrent_workflow;
 pub mod conversation;
 pub mod execute_agent_batch;
 pub mod graph_workflow;
+pub mod mixture_of_agents;
 pub mod persistence;
 pub mod rearrange;
 pub mod sequential_workflow;

@@ -9,3 +9,4 @@ pub use swarms_macro;
 
 // Re-export commonly used traits and types
 pub use structs::agent::Agent;
+pub use structs::mixture_of_agents::{MixtureOfAgents, MixtureOfAgentsBuilder, MoAError};

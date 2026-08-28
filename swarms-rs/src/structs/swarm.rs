@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::structs::concurrent_workflow::ConcurrentWorkflowError;
+use crate::structs::mixture_of_agents::MoAError;
 
 pub trait Swarm {
     fn name(&self) -> &str;
@@ -20,6 +21,8 @@ pub enum SwarmError {
     ConcurrentWorkflowError(#[from] ConcurrentWorkflowError),
     #[error("AgentRearrangeError: {0}")]
     AgentRearrangeError(#[from] crate::structs::rearrange::AgentRearrangeError),
+    #[error("MoAError: {0}")]
+    MoAError(#[from] MoAError),
 }
 
 #[derive(Clone, Default, Serialize)]

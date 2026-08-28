@@ -96,5 +96,9 @@ name = "swarm_router"
 path = "examples/multiple_agent/swarm_router.rs"
 
 [[example]]
+name = "mixture_of_agents"
+path = "examples/multiple_agent/mixture_of_agents.rs"
+
+[[example]]
 name = "pretty_print_example"
 path = "examples/single_agent/pretty_print_example.rs"

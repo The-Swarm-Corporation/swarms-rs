@@ -387,6 +387,60 @@ async fn main() -> Result<()> {
 }
 ```
 
+### MixtureOfAgents
+
+`MixtureOfAgents` implements the layered **Mixture-of-Agents** architecture: several
+worker agents generate proposals in parallel on every layer, later layers refine the
+previous layer's outputs, and a dedicated aggregator agent synthesises a final answer
+from the full transcript.
+
+```rust
+use std::env;
+
+use anyhow::Result;
+use swarms_rs::llm::provider::openai::OpenAI;
+use swarms_rs::structs::mixture_of_agents::{
+    MixtureOfAgents, MixtureOfAgentsBuilder, DEFAULT_AGGREGATOR_SYSTEM_PROMPT,
+};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+    let api_key = env::var("OPENAI_API_KEY")?;
+    let client = OpenAI::from_url("https://api.openai.com/v1", &api_key).set_model("gpt-4o-mini");
+
+    let researcher = client.agent_builder()
+        .agent_name("Researcher")
+        .system_prompt("Provide a fact-rich, well-structured answer.")
+        .max_loops(1)
+        .build();
+    let critic = client.agent_builder()
+        .agent_name("Critic")
+        .system_prompt("Provide a balanced answer that stresses assumptions and risks.")
+        .max_loops(1)
+        .build();
+    let aggregator = client.agent_builder()
+        .agent_name("Aggregator")
+        .system_prompt(DEFAULT_AGGREGATOR_SYSTEM_PROMPT)
+        .max_loops(1)
+        .build();
+
+    // Two refinement layers, then aggregation.
+    let moa = MixtureOfAgentsBuilder::default()
+        .name("ResearchAndCritiqueMoA")
+        .agents(vec![Box::new(researcher), Box::new(critic)])
+        .aggregator_agent(Box::new(aggregator))
+        .layers(2)
+        .build()?;
+
+    let answer = moa
+        .execute("What are the trade-offs of multi-agent systems in production?")
+        .await?;
+    println!("{answer}");
+    Ok(())
+}
+```
+
 
 -----------
 
@@ -444,6 +498,7 @@ graph TD
 |----------------------------------------------|--------------------------------------------------------------------------------------|
 | **Sequential Workflows**                     | Linear progression of tasks between multiple agents                                   |
 | **Concurrent Workflows**                     | Parallel execution of tasks across multiple agents                                    |
+| **Mixture of Agents**                        | Layered ensemble where workers refine proposals and an aggregator synthesises a final answer |
 | **Communication Protocols**                  | Standardized methods for inter-agent communication                                    |
 | **Task Distribution**                        | Intelligent distribution of workload across agent networks                            |
 | **Synchronization**                          | Mechanisms for coordinating agent activities and sharing results                      |
