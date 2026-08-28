@@ -29,7 +29,7 @@ impl MockAgent {
 }
 
 impl Agent for MockAgent {
-    fn run(&self, _task: String) -> BoxFuture<Result<String, AgentError>> {
+    fn run(&self, _task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         if self.should_fail {
             Box::pin(ready(Err(AgentError::NoChoiceFound)))
         } else {
@@ -40,19 +40,19 @@ impl Agent for MockAgent {
     fn run_multiple_tasks(
         &mut self,
         _tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>> {
         Box::pin(ready(Ok(vec![self.response.clone()])))
     }
 
-    fn plan(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn plan(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(ready(Ok(())))
     }
 
-    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(ready(Ok(())))
     }
 
-    fn save_task_state(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn save_task_state(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(ready(Ok(())))
     }
 

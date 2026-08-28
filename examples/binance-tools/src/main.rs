@@ -3,8 +3,15 @@ use std::env;
 use mcp_tools::BinanceMCPTools;
 use rmcp::{
     ServiceExt,
-    transport::{SseServer, stdio},
+    transport::{
+        streamable_http_server::{
+            StreamableHttpServerConfig, StreamableHttpService,
+            session::local::LocalSessionManager,
+        },
+        stdio,
+    },
 };
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 // examples/binance-mcp/src/main.rs
@@ -22,25 +29,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Starting Binance MCP Server...");
 
-    let (ctrlc_tx, ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
-    let (sse_cancel_tx, sse_cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
-        let sse_addr = env::var("BINANCE_MCP_SSE_ADDR")
+    let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let http_task = tokio::spawn(async move {
+        let http_addr: std::net::SocketAddr = env::var("BINANCE_MCP_HTTP_ADDR")
             .unwrap_or("0.0.0.0:8000".parse().unwrap())
             .parse()
-            .expect("Invalid SSE address");
-        tracing::info!("Starting SSE server at {}", sse_addr);
-        let ct = SseServer::serve(sse_addr)
-            .await
-            .expect("Failed to start SSE server")
-            .with_service(BinanceMCPTools::new);
+            .expect("Invalid HTTP address");
+        tracing::info!("Starting Streamable HTTP server at {}", http_addr);
 
-        tokio::select! {
-            _ = ctrlc_rx => {
+        let ct = CancellationToken::new();
+        let service = StreamableHttpService::new(
+            || Ok(BinanceMCPTools::new()),
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+        );
+        let router = axum::Router::new().nest_service("/mcp", service);
+        let tcp_listener = tokio::net::TcpListener::bind(http_addr)
+            .await
+            .expect("Failed to start HTTP server");
+
+        axum::serve(tcp_listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = http_shutdown_rx.await;
                 ct.cancel();
-                sse_cancel_tx.send(()).unwrap();
-            }
-        }
+            })
+            .await
+            .expect("HTTP server error");
     });
 
     tracing::info!("Starting STDIO server...");
@@ -49,9 +63,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::signal::ctrl_c().await?;
     tracing::info!("Stopping Binance MCP Server...");
 
-    ctrlc_tx.send(()).unwrap();
-    service.cancel().await.unwrap();
-    sse_cancel_rx.await.unwrap();
+    let _ = http_shutdown_tx.send(());
+    let _ = http_task.await;
+    service.cancel().await?;
 
     tracing::info!("Binance MCP Server stopped.");
     Ok(())

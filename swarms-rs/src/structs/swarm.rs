@@ -11,7 +11,7 @@ use crate::structs::concurrent_workflow::ConcurrentWorkflowError;
 pub trait Swarm {
     fn name(&self) -> &str;
 
-    fn run(&self, task: String) -> BoxFuture<Result<Box<dyn ErasedSerialize>, SwarmError>>;
+    fn run(&self, task: String) -> BoxFuture<'_, Result<Box<dyn ErasedSerialize>, SwarmError>>;
 }
 
 #[derive(Debug, Error)]
