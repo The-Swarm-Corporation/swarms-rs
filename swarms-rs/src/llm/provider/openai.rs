@@ -96,7 +96,8 @@ impl Model for OpenAI {
     fn completion(
         &self,
         request: CompletionRequest,
-    ) -> BoxFuture<Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>> {
+    ) -> BoxFuture<'_, Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>>
+    {
         Box::pin(async move {
             let mut msgs = Vec::new();
 
@@ -274,9 +275,9 @@ impl TryFrom<llm::completion::Message> for Vec<ChatCompletionRequestMessage> {
                                     return Err(CompletionError::Request("Only support wav and mp3 for now, and must be base64 encoded".into()))
                                 }
 
-                                Ok(ChatCompletionRequestMessageContentPartAudio::from(audio).into())
+                                Ok(ChatCompletionRequestMessageContentPartAudio::try_from(audio)?.into())
                             }
-                            _ => unimplemented!("Unsupported content type"),
+                            _ => Err(CompletionError::Request("Unsupported content type".into())),
                         })
                         .collect::<Result<Vec<ChatCompletionRequestUserMessageContentPart>, _>>()?;
                         Ok(vec![
@@ -319,9 +320,9 @@ impl TryFrom<llm::completion::Message> for Vec<ChatCompletionRequestMessage> {
                                     return Err(CompletionError::Request("Only support wav and mp3 for now, and must be base64 encoded".into()));
                                 }
                                 let content_part = vec![
-                                    ChatCompletionRequestMessageContentPartAudio::from(
+                                    ChatCompletionRequestMessageContentPartAudio::try_from(
                                         audio.clone(),
-                                    )
+                                    )?
                                     .into(),
                                 ];
                                 ChatCompletionRequestUserMessageArgs::default()
@@ -449,22 +450,24 @@ impl From<&llm::completion::Image>
     }
 }
 
-impl From<llm::completion::Audio>
+impl TryFrom<llm::completion::Audio>
     for async_openai::types::ChatCompletionRequestMessageContentPartAudio
 {
-    fn from(audio: llm::completion::Audio) -> Self {
+    type Error = CompletionError;
+
+    fn try_from(audio: llm::completion::Audio) -> Result<Self, Self::Error> {
         let audio_type = match audio.media_type {
             Some(llm::completion::AudioMediaType::WAV) => InputAudioFormat::Wav,
             Some(llm::completion::AudioMediaType::MP3) => InputAudioFormat::Mp3,
-            _ => unimplemented!("Unsupported audio type"),
+            _ => return Err(CompletionError::Request("Unsupported audio type".into())),
         };
 
-        Self {
+        Ok(Self {
             input_audio: InputAudio {
                 data: audio.data,
                 format: audio_type,
             },
-        }
+        })
     }
 }
 

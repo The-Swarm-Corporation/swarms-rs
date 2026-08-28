@@ -20,7 +20,7 @@ impl MockAgent {
 }
 
 impl Agent for MockAgent {
-    fn run(&self, _task: String) -> BoxFuture<Result<String, AgentError>> {
+    fn run(&self, _task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         let response = self.response.clone();
         Box::pin(async move { Ok(response) })
     }
@@ -28,20 +28,20 @@ impl Agent for MockAgent {
     fn run_multiple_tasks(
         &mut self,
         tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>> {
         let response = self.response.clone();
         Box::pin(async move { Ok(tasks.into_iter().map(|_| response.clone()).collect()) })
     }
 
-    fn plan(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn plan(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn save_task_state(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn save_task_state(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 

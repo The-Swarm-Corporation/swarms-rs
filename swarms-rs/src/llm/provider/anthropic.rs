@@ -654,7 +654,7 @@ impl Model for Anthropic {
     fn completion(
         &self,
         request: CompletionRequest,
-    ) -> BoxFuture<Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>> {
+    ) -> BoxFuture<'_, Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>> {
         Box::pin(async move {
             // Convert internal message format to Anthropic format
             let mut messages = Vec::new();

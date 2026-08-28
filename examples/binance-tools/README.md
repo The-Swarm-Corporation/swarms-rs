@@ -6,7 +6,7 @@
 
 ## Environment Variables
 
-- `BINANCE_MCP_SSE_ADDR` - Binance MCP SSE address, default: `127.0.0.1:8000`
+- `BINANCE_MCP_HTTP_ADDR` - Binance MCP Streamable HTTP address, default: `0.0.0.0:8000`
 
 ## Usage
 
@@ -19,6 +19,6 @@ Or (debug mode)
 cargo run --package binance-tools
 ```
 
-Both STDIO and SSE MCP server enabled.
+Both STDIO and Streamable HTTP MCP server enabled.
 
-SSE MCP server: `http://BINANCE_MCP_SSE_ADDR/sse`
+Streamable HTTP MCP server: `http://BINANCE_MCP_HTTP_ADDR/mcp`

@@ -252,22 +252,22 @@ impl Default for AgentConfig {
 
 pub trait Agent: Send + Sync {
     /// Runs the autonomous agent loop to complete the given task.
-    fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>>;
+    fn run(&self, task: String) -> BoxFuture<'_, Result<String, AgentError>>;
 
     /// Run multiple tasks concurrently
     fn run_multiple_tasks(
         &mut self,
         tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>>;
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>>;
 
     /// Plan the task and add it to short term memory
-    fn plan(&self, task: String) -> BoxFuture<Result<(), AgentError>>;
+    fn plan(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>>;
 
     /// Query long term memory and add the results to short term memory
-    fn query_long_term_memory(&self, task: String) -> BoxFuture<Result<(), AgentError>>;
+    fn query_long_term_memory(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>>;
 
     /// Save the agent state to a file
-    fn save_task_state(&self, task: String) -> BoxFuture<Result<(), AgentError>>;
+    fn save_task_state(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>>;
 
     /// Check a response to determine if it is complete
     fn is_response_complete(&self, response: String) -> bool;
