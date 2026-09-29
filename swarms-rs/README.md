@@ -1,14 +1,14 @@
-<div align="center">
+<div align="left">
   <a href="https://swarms.ai">
-    <img src="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/logo.png" style="margin: 15px; max-width: 500px" width="80%" alt="Logo">
+    <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 500px" width="80%" alt="Logo">
   </a>
 </div>
 
-<p align="center">
+<p align="left">
   <em>The Enterprise-Grade Production-Ready Multi-Agent Orchestration Framework in Rust</em>
 </p>
 
-<p align="center">
+<p align="left">
   <!-- Rust Crate Badges -->
   <a href="https://crates.io/crates/swarms-rs" target="_blank">
     <img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" />
@@ -17,7 +17,7 @@
   </a>
 </p>
 
-<p align="center">
+<p align="left">
     <a href="https://twitter.com/swarms_corp/">
         <img alt="Twitter" src="https://img.shields.io/badge/Twitter-@swarms__corp-1da1f2?style=for-the-badge&logo=twitter" />
     </a>
@@ -35,7 +35,7 @@
     </a>
 </p>
 
-<p align="center">
+<p align="left">
     <!-- Project Stats for swarms-rs -->
     <a href="https://github.com/The-Swarm-Corporation/swarms-rs/issues">
         <img src="https://img.shields.io/github/issues/The-Swarm-Corporation/swarms-rs?style=for-the-badge&color=blueviolet" alt="GitHub issues">
