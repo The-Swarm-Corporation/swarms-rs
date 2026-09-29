@@ -1,51 +1,22 @@
-<div align="center">
+<h1 align="left">Swarms Rust</h1>
+
+<div align="left">
   <a href="https://swarms.ai">
-    <img src="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/logo.png" style="margin: 15px; max-width: 500px" width="80%" alt="ロゴ">
+    <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 500px" width="80%" alt="ロゴ">
   </a>
 </div>
 
-<p align="center">
+<p align="left">
+  <a href="https://crates.io/crates/swarms-rs"><img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" /></a>
+  <a href="https://docs.rs/swarms-rs"><img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-swarms--rs-blue?style=for-the-badge&logo=rust" /></a>
+  <a href="https://discord.gg/EamjgSaEQf"><img alt="Discord" src="https://img.shields.io/discord/1202327470812078080?label=Discord&logo=discord&style=for-the-badge&color=5865F2" /></a>
+  <a href="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/The-Swarm-Corporation/swarms-rs?style=for-the-badge&color=success" /></a>
+</p>
+
+<p align="left">
   <em>Rustで構築されたエンタープライズグレードの本番環境対応マルチエージェントオーケストレーションフレームワーク</em>
 </p>
 
-<p align="center">
-  <!-- Rust Crate Badges -->
-  <a href="https://crates.io/crates/swarms-rs" target="_blank">
-    <img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" />
-    <img alt="Downloads" src="https://img.shields.io/crates/d/swarms-rs?style=for-the-badge&color=orange" />
-    <img alt="Rust Docs" src="https://img.shields.io/badge/docs.rs-swarms--rs-blue?style=for-the-badge&logo=rust" />
-  </a>
-</p>
-
-<p align="center">
-    <a href="https://twitter.com/swarms_corp/">🐦 Twitter</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://discord.gg/EamjgSaEQf">📢 Discord</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://swarms.ai">Swarms Website</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://docs.swarms.world">📙 ドキュメント</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://swarms.world">Swarms Marketplace</a>
-</p>
-
-<p align="center">
-    <!-- Social Media -->
-    <a href="https://discord.gg/jHnrkH5y">
-        <img src="https://img.shields.io/badge/Discord-サーバーに参加-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
-    </a>
-    <a href="https://www.youtube.com/@kyegomez3242">
-        <img src="https://img.shields.io/badge/YouTube-チャンネル登録-red?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube">
-    </a>
-    <a href="https://www.linkedin.com/in/kye-g-38759a207/">
-        <img src="https://img.shields.io/badge/LinkedIn-フォロー-blue?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn">
-    </a>
-    <a href="https://x.com/kyegomezb">
-        <img src="https://img.shields.io/badge/X.com-フォロー-1DA1F2?style=for-the-badge&logo=x&logoColor=white" alt="X.com">
-    </a>
-</p>
-
-## 概要
 
 `swarms-rs`は、Rustで構築されたエンタープライズグレードの本番環境対応マルチエージェントオーケストレーションフレームワークです。Rustの最先端のパフォーマンスと安全性機能を活用し、最も要求の厳しいタスクを前例のない速度と効率で処理するように設計されています。
 

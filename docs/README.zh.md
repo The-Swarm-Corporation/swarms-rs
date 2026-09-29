@@ -1,99 +1,22 @@
-<div align="center">
+<h1 align="left">Swarms Rust</h1>
+
+<div align="left">
   <a href="https://swarms.ai">
-    <img src="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/logo.png" style="margin: 15px; max-width: 1000px" width="80%" alt="Logo">
+    <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 500px" width="80%" alt="Logo">
   </a>
 </div>
 
-<p align="center">
+<p align="left">
+  <a href="https://crates.io/crates/swarms-rs"><img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" /></a>
+  <a href="https://docs.rs/swarms-rs"><img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-swarms--rs-blue?style=for-the-badge&logo=rust" /></a>
+  <a href="https://discord.gg/EamjgSaEQf"><img alt="Discord" src="https://img.shields.io/discord/1202327470812078080?label=Discord&logo=discord&style=for-the-badge&color=5865F2" /></a>
+  <a href="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/The-Swarm-Corporation/swarms-rs?style=for-the-badge&color=success" /></a>
+</p>
+
+<p align="left">
   <em>基于 Rust 的企业级生产就绪多智能体编排框架</em>
 </p>
 
-<p align="center">
-  <!-- Rust Crate Badges -->
-  <a href="https://crates.io/crates/swarms-rs" target="_blank">
-    <img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" />
-    <img alt="Downloads" src="https://img.shields.io/crates/d/swarms-rs?style=for-the-badge&color=orange" />
-    <img alt="Rust Docs" src="https://img.shields.io/badge/docs.rs-swarms--rs-blue?style=for-the-badge&logo=rust" />
-  </a>
-</p>
-
-<p align="center">
-    <a href="https://twitter.com/swarms_corp/">🐦 推特</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://discord.gg/EamjgSaEQf">📢 Discord</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://swarms.ai">Swarms 官网</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://docs.swarms.world">📙 文档</a>
-    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-    <a href="https://swarms.world">Swarms 市场</a>
-</p>
-
-<p align="center">
-    <!-- 社交媒体 -->
-    <a href="https://discord.gg/jHnrkH5y">
-        <img src="https://img.shields.io/badge/Discord-加入我们的服务器-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
-    </a>
-    <a href="https://www.youtube.com/@kyegomez3242">
-        <img src="https://img.shields.io/badge/YouTube-订阅-red?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube">
-    </a>
-    <a href="https://www.linkedin.com/in/kye-g-38759a207/">
-        <img src="https://img.shields.io/badge/LinkedIn-关注-blue?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn">
-    </a>
-    <a href="https://x.com/kyegomezb">
-        <img src="https://img.shields.io/badge/X.com-关注-1DA1F2?style=for-the-badge&logo=x&logoColor=white" alt="X.com">
-    </a>
-</p>
-
-<p align="center">
-    <!-- 项目统计 -->
-    <a href="https://github.com/kyegomez/swarms/issues">
-        <img src="https://img.shields.io/github/issues/kyegomez/swarms" alt="GitHub issues">
-    </a>
-    <a href="https://github.com/kyegomez/swarms/network">
-        <img src="https://img.shields.io/github/forks/kyegomez/swarms" alt="GitHub forks">
-    </a>
-    <a href="https://github.com/The-Swarm-Corporation/swarms-rs/stargazers">
-        <img src="https://github.com/The-Swarm-Corporation/swarms-rs" alt="GitHub stars">
-    </a>
-    <a href="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/LICENSE">
-        <img src="https://github.com/The-Swarm-Corporation/swarms-rs" alt="GitHub license">
-    </a>
-    <a href="https://star-history.com/#kyegomez/swarms">
-        <img src="https://img.shields.io/github/stars/kyegomez/swarms?style=social" alt="GitHub star chart">
-    </a>
-</p>
-
-<p align="center">
-    <!-- 分享按钮 -->
-    <a href="https://twitter.com/intent/tweet?text=Check%20out%20this%20amazing%20AI%20project:%20&url=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms">
-        <img src="https://img.shields.io/twitter/url/https/twitter.com/cloudposse.svg?style=social&label=分享%20%40kyegomez/swarms" alt="Share on Twitter">
-    </a>
-    <a href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms">
-        <img src="https://img.shields.io/badge/分享-%20facebook-blue" alt="Share on Facebook">
-    </a>
-    <a href="https://www.linkedin.com/shareArticle?mini=true&url=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms&title=&summary=&source=">
-        <img src="https://img.shields.io/badge/分享-%20linkedin-blue" alt="Share on LinkedIn">
-    </a>
-</p>
-
-<p align="center">
-    <!-- 额外分享按钮 -->
-    <a href="https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms&title=Swarms%20-%20the%20future%20of%20AI">
-        <img src="https://img.shields.io/badge/-在Reddit上分享-orange" alt="Share on Reddit">
-    </a>
-    <a href="https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms&t=Swarms%20-%20the%20future%20of%20AI">
-        <img src="https://img.shields.io/badge/-在Hacker%20News上分享-orange" alt="Share on Hacker News">
-    </a>
-    <a href="https://pinterest.com/pin/create/button/?url=https%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms&media=https%3A%2F%2Fexample.com%2Fimage.jpg&description=Swarms%20-%20the%20future%20of%20AI">
-        <img src="https://img.shields.io/badge/-在Pinterest上分享-red" alt="Share on Pinterest">
-    </a>
-    <a href="https://api.whatsapp.com/send?text=Check%20out%20Swarms%20-%20the%20future%20of%20AI%20%23swarms%20%23AI%0A%0Ahttps%3A%2F%2Fgithub.com%2Fkyegomez%2Fswarms">
-        <img src="https://img.shields.io/badge/-在WhatsApp上分享-green" alt="Share on WhatsApp">
-    </a>
-</p>
-
-## 概述
 
 `swarms-rs` 是一个基于 Rust 构建的企业级、生产就绪的多智能体编排框架，旨在以无与伦比的速度和效率处理最苛刻的任务。利用 Rust 的尖端性能和安全性特性，`swarms-rs` 为跨各种行业的复杂多智能体系统编排提供了强大且可扩展的解决方案。
 

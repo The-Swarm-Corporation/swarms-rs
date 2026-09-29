@@ -2,7 +2,7 @@
 
 <div align="left">
   <a href="https://swarms.ai">
-    <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 500px" width="80%" alt="Logo">
+    <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 800px" width="80%" alt="Logo">
   </a>
 </div>
 
