@@ -55,23 +55,23 @@ cargo run --example anthropic_claude_agent -- --help
 
 | Model | Context Window | Description | Best For |
 |-------|----------------|-------------|----------|
-| `claude-3-5-sonnet-20241022` | 200K | Most intelligent model | Complex analysis, creative tasks |
-| `claude-3-5-haiku-20241022` | 200K | Fast and efficient | Quick responses, simple tasks |
-| `claude-3-opus-20240229` | 200K | Most powerful model | Maximum intelligence required |
-| `claude-3-sonnet-20240229` | 200K | Balanced performance | General purpose |
-| `claude-3-haiku-20240307` | 200K | Fastest model | High-throughput applications |
+| `claude-opus-5-5` (default) | 1M | Most capable Opus | Complex analysis, agentic work |
+| `claude-sonnet-5-5` | 1M | Balanced speed and capability | General purpose |
+| `claude-haiku-4-5` | 200K | Fastest model | Quick responses, high-throughput applications |
+
+Current Opus and Sonnet models always think and reject `temperature`; leave it unset for them.
 
 ### Model Selection Examples
 
 ```rust
 // For complex analytical tasks
-let sonnet_model = Anthropic::from_env_with_model("claude-3-5-sonnet-20241022");
+let sonnet_model = Anthropic::from_env_with_model("claude-sonnet-5-5");
 
 // For fast, simple responses
-let haiku_model = Anthropic::from_env_with_model("claude-3-5-haiku-20241022");
+let haiku_model = Anthropic::from_env_with_model("claude-haiku-4-5");
 
 // For maximum intelligence
-let opus_model = Anthropic::from_env_with_model("claude-3-opus-20240229");
+let opus_model = Anthropic::from_env_with_model("claude-opus-5-5");
 ```
 
 ## 🛠️ Advanced Configuration
@@ -165,9 +165,9 @@ use std::time::Instant;
 
 // Compare model performance
 let models = vec![
-    ("claude-3-5-haiku-20241022", "Fast"),
-    ("claude-3-5-sonnet-20241022", "Balanced"),
-    ("claude-3-opus-20240229", "Powerful"),
+    ("claude-haiku-4-5", "Fast"),
+    ("claude-sonnet-5-5", "Balanced"),
+    ("claude-opus-5-5", "Powerful"),
 ];
 
 for (model_name, description) in models {

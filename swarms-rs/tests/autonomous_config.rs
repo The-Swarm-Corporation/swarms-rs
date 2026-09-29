@@ -68,11 +68,16 @@ impl Default for SecurityConfig {
 }
 
 impl SecurityConfig {
-    pub fn load_or_create() -> Self {
-        let config_path = "autonomous_test_config.json";
+    /// Kept in the system temp dir so test runs don't leave files in the crate directory
+    fn config_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("autonomous_test_config.json")
+    }
 
-        if std::path::Path::new(config_path).exists() {
-            match std::fs::read_to_string(config_path) {
+    pub fn load_or_create() -> Self {
+        let config_path = Self::config_path();
+
+        if config_path.exists() {
+            match std::fs::read_to_string(&config_path) {
                 Ok(content) => match serde_json::from_str(&content) {
                     Ok(config) => return config,
                     Err(e) => {
@@ -92,7 +97,7 @@ impl SecurityConfig {
 
     pub fn save(&self) {
         let config_json = serde_json::to_string_pretty(self).unwrap();
-        std::fs::write("autonomous_test_config.json", config_json).unwrap_or_else(|e| {
+        std::fs::write(Self::config_path(), config_json).unwrap_or_else(|e| {
             eprintln!("⚠️  Failed to save config: {}", e);
         });
     }

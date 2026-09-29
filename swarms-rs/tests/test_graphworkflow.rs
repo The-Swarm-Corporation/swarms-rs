@@ -161,6 +161,101 @@ mod tests {
         assert!(matches!(result, Err(GraphWorkflowError::AgentNotFound(_))));
     }
 
+    #[test]
+    fn test_connect_after_agent_removal() {
+        // Removing a node leaves a gap in the graph's indices; the cycle check must cope
+        let mut workflow = DAGWorkflow::new("test", "Test workflow");
+        workflow.register_agent(create_mock_agent("1", "agent1", "First agent", "response1"));
+        workflow.register_agent(create_mock_agent(
+            "2",
+            "agent2",
+            "Second agent",
+            "response2",
+        ));
+        workflow.register_agent(create_mock_agent("3", "agent3", "Third agent", "response3"));
+
+        workflow.remove_agent("agent1").unwrap();
+        workflow
+            .connect_agents("agent2", "agent3", Flow::default())
+            .unwrap();
+        assert!(matches!(
+            workflow.connect_agents("agent3", "agent2", Flow::default()),
+            Err(GraphWorkflowError::CycleDetected)
+        ));
+    }
+
+    /// agent1 -> agent2 -> agent4 and agent1 -> agent3 -> agent4
+    fn diamond(agent2: Box<MockAgent>, to_agent3: Flow) -> DAGWorkflow {
+        let mut workflow = DAGWorkflow::new("test", "Test workflow");
+        workflow.register_agent(create_mock_agent("1", "agent1", "First agent", "response1"));
+        workflow.register_agent(agent2);
+        workflow.register_agent(create_mock_agent("3", "agent3", "Third agent", "response3"));
+        workflow.register_agent(create_mock_agent("4", "agent4", "Join agent", "response4"));
+        workflow
+            .connect_agents("agent1", "agent2", Flow::default())
+            .unwrap();
+        workflow
+            .connect_agents("agent1", "agent3", to_agent3)
+            .unwrap();
+        workflow
+            .connect_agents("agent2", "agent4", Flow::default())
+            .unwrap();
+        workflow
+            .connect_agents("agent3", "agent4", Flow::default())
+            .unwrap();
+        workflow
+    }
+
+    #[tokio::test]
+    async fn test_join_runs_when_a_branch_condition_is_false() {
+        let never = Flow {
+            transform: None,
+            condition: Some(Arc::new(|_: &str| false)),
+        };
+        let mut workflow = diamond(
+            create_mock_agent("2", "agent2", "Second agent", "response2"),
+            never,
+        );
+
+        let results = workflow.execute_workflow("agent1", "input").await.unwrap();
+        assert!(!results.contains_key("agent3"));
+        assert_eq!(
+            results.get("agent4").unwrap().value().as_deref().unwrap(),
+            "response4"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_join_runs_when_a_parent_fails() {
+        let mut workflow = diamond(
+            create_failing_agent("2", "agent2", "fail error"),
+            Flow::default(),
+        );
+
+        let results = workflow.execute_workflow("agent1", "input").await.unwrap();
+        assert!(results.get("agent2").unwrap().is_err());
+        assert!(results.get("agent4").unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_join_ignores_parent_unreachable_from_start() {
+        // agent0 -> agent2 <- agent1, starting from agent1: agent0 never runs
+        let mut workflow = DAGWorkflow::new("test", "Test workflow");
+        workflow.register_agent(create_mock_agent("0", "agent0", "Other root", "response0"));
+        workflow.register_agent(create_mock_agent("1", "agent1", "First agent", "response1"));
+        workflow.register_agent(create_mock_agent("2", "agent2", "Join agent", "response2"));
+        workflow
+            .connect_agents("agent0", "agent2", Flow::default())
+            .unwrap();
+        workflow
+            .connect_agents("agent1", "agent2", Flow::default())
+            .unwrap();
+
+        let results = workflow.execute_workflow("agent1", "input").await.unwrap();
+        assert!(!results.contains_key("agent0"));
+        assert!(results.get("agent2").unwrap().is_ok());
+    }
+
     #[tokio::test]
     async fn test_execute_single_agent() {
         let mut workflow = DAGWorkflow::new("test", "Test workflow");

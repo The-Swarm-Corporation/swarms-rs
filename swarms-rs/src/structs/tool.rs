@@ -32,7 +32,7 @@ pub trait Tool: Sized + Send + Sync {
     fn call(
         &self,
         args: Self::Args,
-    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
 
     // Provided method
     fn name(&self) -> String {

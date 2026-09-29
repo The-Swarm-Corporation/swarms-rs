@@ -68,3 +68,21 @@ async fn test_log_to_file() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_log_to_file_creates_parent_dir_and_separates_entries()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let log_path = dir.path().join("logs").join("nested").join("agent.log");
+
+    persistence::log_to_file("first", &log_path).await?;
+    persistence::log_to_file("second", &log_path).await?;
+
+    let content = String::from_utf8(persistence::load_from_file(&log_path).await?)?;
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 2, "{content:?}");
+    assert!(lines[0].ends_with("first"));
+    assert!(lines[1].ends_with("second"));
+
+    Ok(())
+}

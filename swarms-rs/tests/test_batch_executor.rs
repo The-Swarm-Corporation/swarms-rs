@@ -218,8 +218,56 @@ async fn test_batch_executor_with_multiple_agents() {
 
     assert!(result.is_ok());
     let results = result.unwrap();
-    // One task, three agents = 3 results
-    assert_eq!(results.len(), 3);
+    // One task, three agents = one conversation holding all three responses
+    assert_eq!(results.len(), 1);
+    let conversation = results.get("Task1").unwrap();
+    assert_eq!(conversation.history.len(), 3);
+    let transcript = conversation.to_string();
+    for response in ["Response1", "Response2", "Response3"] {
+        assert!(transcript.contains(response), "missing {response}");
+    }
+}
+
+#[tokio::test]
+async fn test_batch_executor_many_tasks_many_agents_does_not_deadlock() {
+    let agents: Vec<Box<dyn Agent>> = vec![
+        Box::new(MockAgent::new("Agent1", "Response1")),
+        Box::new(MockAgent::new("Agent2", "Response2")),
+    ];
+    let executor = AgentBatchExecutor::new(agents, BatchConfig::default());
+
+    let tasks: Vec<String> = (0..5).map(|i| format!("Task {i}")).collect();
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        executor.execute_batch(tasks),
+    )
+    .await
+    .expect("execute_batch deadlocked")
+    .unwrap();
+
+    assert_eq!(results.len(), 5);
+    for entry in results.iter() {
+        assert_eq!(entry.value().history.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn test_batch_executor_zero_concurrency_does_not_hang() {
+    let agents: Vec<Box<dyn Agent>> = vec![Box::new(MockAgent::new("Agent1", "Response1"))];
+    let config = BatchConfigBuilder::default()
+        .max_concurrent_tasks(0)
+        .build();
+    let executor = AgentBatchExecutor::new(agents, config);
+
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        executor.execute_batch(vec!["Task1".to_string(), "Task2".to_string()]),
+    )
+    .await
+    .expect("execute_batch hung with max_concurrent_tasks(0)")
+    .unwrap();
+
+    assert_eq!(results.len(), 2);
 }
 
 #[tokio::test]
@@ -256,8 +304,12 @@ async fn test_batch_executor_with_failing_agent() {
     let tasks = vec!["Task1".to_string()];
     let result = executor.execute_batch(tasks).await;
 
-    // The executor should complete but with some failed results
+    // The executor should complete, keeping the successful agent's response
     assert!(result.is_ok());
+    let results = result.unwrap();
+    let conversation = results.get("Task1").unwrap();
+    assert_eq!(conversation.history.len(), 1);
+    assert!(conversation.to_string().contains("Response1"));
 }
 
 #[tokio::test]

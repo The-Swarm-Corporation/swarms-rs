@@ -18,7 +18,7 @@
 </p>
 
 
-`swarms-rs` is the first-ever enterprise-grade, production-ready multi-agent orchestration framework built in Rust, designed to handle the most demanding tasks with unparalleled speed and efficiency. By leveraging Rust's cutting-edge performance and safety features, `swarms-rs` provides a powerful and scalable solution for orchestrating complex multi-agent systems across various industries.
+Swarms Rust is the first-ever enterprise-grade, production-ready multi-agent orchestration framework built in Rust, designed to handle the most demanding tasks with unparalleled speed and efficiency. By leveraging Rust's cutting-edge performance and safety features, `swarms-rs` provides a powerful and scalable solution for orchestrating complex multi-agent systems across various industries.
 
 
 ## 🌐 Available Languages
@@ -56,6 +56,14 @@
 ```bash
 # Add the latest version to your project
 cargo add swarms-rs
+
+# Used by the examples below
+cargo add tokio --features full
+cargo add anyhow
+
+# Only needed if you define tools with #[tool]
+cargo add swarms-macro serde --features serde/derive
+cargo add serde_json thiserror schemars@0.8
 ```
 
 
@@ -71,13 +79,16 @@ RUST_LOG=debug
 SWARMS_LOG_LEVEL=DEBUG 
 
 OPENAI_API_KEY=your_openai_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_BASE=https://api.openai.com/v1
 
 # Or for DeepSeek
 DEEPSEEK_API_KEY="your_deepseek_key_here"
 DEEPSEEK_BASE_URL="https://api.deepseek.com/v1"
 
 ANTHROPIC_API_KEY=""
+
+# Or for OpenRouter (one key for models from every major provider)
+OPENROUTER_API_KEY=""
 ```
 
 ------------
@@ -153,6 +164,173 @@ async fn main() -> Result<()> {
 }
 
 ```
+
+### OpenRouter
+
+[OpenRouter](https://openrouter.ai) gives you one API key and one API for models from Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek, xAI and more. `OpenRouter` implements the same `Model` trait as the other providers, so it works with tools, MCP servers and every multi-agent structure. Pick any model ID from [openrouter.ai/models](https://openrouter.ai/models), or keep the default `openrouter/auto` and let OpenRouter choose a model for each prompt.
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `OPENROUTER_API_KEY` | Yes | Your OpenRouter key |
+| `OPENROUTER_API_BASE` | No | Override the API base (default `https://openrouter.ai/api/v1`) |
+| `OPENROUTER_APP_URL` / `OPENROUTER_APP_NAME` | No | Credit your app on openrouter.ai rankings |
+
+#### A single agent
+
+```rust
+use swarms_rs::llm::provider::openrouter::OpenRouter;
+use swarms_rs::structs::agent::Agent;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let agent = OpenRouter::from_env_with_model("anthropic/claude-opus-5.5")
+        .agent_builder()
+        .agent_name("Researcher")
+        .system_prompt("You are a concise research assistant.")
+        .build();
+
+    println!("{}", agent.run("What is a vector database?".to_string()).await?);
+    Ok(())
+}
+```
+
+#### An agent with tools
+
+Tools defined with `#[tool]` work with any OpenRouter model that supports tool calling, so switching models doesn't touch the tools:
+
+```rust
+use swarms_macro::tool;
+use swarms_rs::llm::provider::openrouter::OpenRouter;
+use swarms_rs::structs::agent::Agent;
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown unit '{0}'")]
+pub struct UnknownUnit(String);
+
+#[tool(
+    description = "Convert a temperature between Celsius and Fahrenheit",
+    arg(value, description = "The temperature to convert"),
+    arg(to, description = "Target unit: 'celsius' or 'fahrenheit'")
+)]
+fn convert_temperature(value: f64, to: String) -> Result<f64, UnknownUnit> {
+    match to.as_str() {
+        "celsius" => Ok((value - 32.0) * 5.0 / 9.0),
+        "fahrenheit" => Ok(value * 9.0 / 5.0 + 32.0),
+        other => Err(UnknownUnit(other.to_string())),
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let agent = OpenRouter::from_env_with_model("openai/gpt-5.5")
+        .agent_builder()
+        .system_prompt("Use the tools for unit conversions instead of guessing.")
+        .add_tool(ConvertTemperature)
+        .max_loops(2)
+        .build();
+
+    println!("{}", agent.run("What is 98.6°F in Celsius?".to_string()).await?);
+    Ok(())
+}
+```
+
+#### A panel of models from different providers
+
+One client, one key, and a different model per agent. A `ConcurrentWorkflow` asks them all the same question at once:
+
+```rust
+use swarms_rs::llm::provider::openrouter::OpenRouter;
+use swarms_rs::structs::agent::Agent;
+use swarms_rs::structs::concurrent_workflow::ConcurrentWorkflow;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = OpenRouter::from_env();
+    let models = ["anthropic/claude-opus-5.5", "openai/gpt-5.5", "google/gemini-3.8-flash"];
+
+    let agents: Vec<Box<dyn Agent>> = models
+        .iter()
+        .map(|model| {
+            Box::new(
+                client
+                    .clone()
+                    .set_model(*model)
+                    .agent_builder()
+                    .agent_name(*model)
+                    .system_prompt("Answer in at most three sentences and commit to a position.")
+                    .build(),
+            ) as Box<dyn Agent>
+        })
+        .collect();
+
+    let workflow = ConcurrentWorkflow::builder()
+        .name("ModelPanel")
+        .agents(agents)
+        .build();
+
+    let result = workflow
+        .run("Should a new backend service start as a monolith or as microservices?")
+        .await?;
+    for message in &result.history {
+        println!("── {} ──\n{}\n", message.role, message.content);
+    }
+    Ok(())
+}
+```
+
+#### A multi-model pipeline
+
+Each stage of a `SequentialWorkflow` can run on the model best suited to it, such as a fast long-context model for research, a strong writer, and a different model family as the editor:
+
+```rust
+use swarms_rs::llm::provider::openrouter::OpenRouter;
+use swarms_rs::structs::agent::Agent;
+use swarms_rs::structs::sequential_workflow::SequentialWorkflow;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = OpenRouter::from_env();
+    let stage = |model: &str, name: &str, prompt: &str| -> Box<dyn Agent> {
+        Box::new(
+            client
+                .clone()
+                .set_model(model)
+                .agent_builder()
+                .agent_name(name)
+                .system_prompt(prompt)
+                .build(),
+        )
+    };
+
+    let workflow = SequentialWorkflow::builder()
+        .name("OpenRouterPipeline")
+        .agents(vec![
+            stage("google/gemini-3.8-flash", "Researcher", "List the key facts as bullet points."),
+            stage("anthropic/claude-opus-5.5", "Writer", "Turn the notes into a 300-word article."),
+            stage("openai/gpt-5.5", "Editor", "Fix errors and return only the final article."),
+        ])
+        .build();
+
+    let result = workflow.run("How Rust's borrow checker prevents data races").await?;
+    if let Some(article) = result.history.last() {
+        println!("{}", article.content);
+    }
+    Ok(())
+}
+```
+
+#### Run the OpenRouter examples
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+
+cargo run --example openrouter_agent        # a single agent (set OPENROUTER_MODEL to pick a model)
+cargo run --example openrouter_tools        # an agent with #[tool] functions
+cargo run --example openrouter_model_panel  # several providers' models answer concurrently
+cargo run --example openrouter_pipeline     # research -> write -> edit, a different model per stage
+```
+
+The full sources are in [`examples/single_agent`](examples/single_agent) and [`examples/multiple_agent`](examples/multiple_agent).
 
 --------
 
@@ -366,7 +544,7 @@ To run the graph workflow example:
 cargo run --example graph_workflow
 ```
 
-`DEEPSEEK_API_KEY` and `DEEPSEEK_BASE_URL` environment variables are read by default.
+Most examples read the `DEEPSEEK_API_KEY` and `DEEPSEEK_BASE_URL` environment variables; the `openrouter_*` examples read `OPENROUTER_API_KEY` (see [OpenRouter](#openrouter)).
 
 ----
 
@@ -376,53 +554,62 @@ cargo run --example graph_workflow
 In swarms-rs, we modularize the framework into three primary architectural stages, each building upon the previous to create increasingly sophisticated agent systems:
 
 
-```mermaid
-graph TD
-    A[Framework Architecture] --> B[1. Agent Layer]
-    A --> C[2. Multi-Agent Structures]
-    A --> D[3. Cascading Systems]
-    
-    B --> B1[LLM Integration]
-    B --> B2[Tool System]
-    B --> B3[Memory Management]
-    
-    C --> C1[Sequential Workflow]
-    C --> C2[Concurrent Workflow]
-    C --> C3[Communication Protocols]
-    
-    D --> D1[Agent Networks]
-    D --> D2[Hierarchical Systems]
-    D --> D3[Swarm Intelligence]
+```text
+swarms-rs/
+├── swarms-rs/                        # The framework crate
+│   ├── src/
+│   │   │   ── 1. Agent Layer ──
+│   │   ├── agent/
+│   │   │   └── swarms_agent.rs       # SwarmsAgent: the run loop, tool calls, planning, autosave
+│   │   ├── llm/                      # LLM integration
+│   │   │   ├── completion.rs         # Message and content types shared by every provider
+│   │   │   ├── request.rs            # CompletionRequest, CompletionResponse, ToolDefinition
+│   │   │   └── provider/
+│   │   │       ├── openai.rs         # OpenAI and OpenAI-compatible APIs (DeepSeek, vLLM, ...)
+│   │   │       ├── anthropic.rs      # Anthropic Claude
+│   │   │       └── openrouter.rs     # OpenRouter: one key for models from every major provider
+│   │   ├── structs/
+│   │   │   ├── agent.rs              # Agent trait and AgentConfig
+│   │   │   ├── tool.rs               # Tool traits and MCP tools
+│   │   │   ├── conversation.rs       # Conversation memory
+│   │   │   ├── persistence.rs        # Saving state and logs to disk
+│   │   │   │
+│   │   │   │   ── 2. Multi-Agent Structures ──
+│   │   │   ├── sequential_workflow.rs    # Agents in a chain, each building on the last
+│   │   │   ├── concurrent_workflow.rs    # Agents working on the same task in parallel
+│   │   │   ├── graph_workflow.rs         # A DAG of agents with conditional edges
+│   │   │   ├── rearrange.rs              # AgentRearrange: flows such as "a -> b, c"
+│   │   │   ├── execute_agent_batch.rs    # Run many tasks across many agents
+│   │   │   │
+│   │   │   │   ── 3. Cascading Systems ──
+│   │   │   ├── swarms_router.rs      # Choose a swarm type at runtime
+│   │   │   ├── swarm.rs              # Swarm trait and run metadata shared by all structures
+│   │   │   └── utils.rs
+│   │   ├── prompts/                  # Built-in multi-agent collaboration prompts
+│   │   └── logging.rs
+│   ├── examples/
+│   │   ├── single_agent/             # Agents, tools, MCP, Anthropic, OpenRouter
+│   │   └── multiple_agent/           # Workflows, routers, multi-model pipelines
+│   └── tests/
+├── swarms-macro/                     # The #[tool] procedural macro
+├── examples/                         # Standalone example crates (MCP servers, Binance agent, ...)
+└── docs/                             # Translated READMEs and provider guides
 ```
 
 # Features
 
-| **Agents (LLM + Tools + Memory)** |                                                                                                 |
-|-----------------------------------|-------------------------------------------------------------------------------------------------|
-| **Language Models**               | Integration with various LLM providers (OpenAI, DeepSeek, etc.)                                 |
-| **Tool System**                   | Extensible framework for adding capabilities through MCP and custom tools                       |
-| **Memory Management**             | Short-term and long-term memory systems for maintaining context                                 |
-| **State Management**              | Handling agent state, configuration, and runtime parameters                                     |
-
-| **Multi-Agent Structures and Communication** |                                                                                      |
-|----------------------------------------------|--------------------------------------------------------------------------------------|
-| **Sequential Workflows**                     | Linear progression of tasks between multiple agents                                   |
-| **Concurrent Workflows**                     | Parallel execution of tasks across multiple agents                                    |
-| **Communication Protocols**                  | Standardized methods for inter-agent communication                                    |
-| **Task Distribution**                        | Intelligent distribution of workload across agent networks                            |
-| **Synchronization**                          | Mechanisms for coordinating agent activities and sharing results                      |
-
-| **Cascading Multi-Agent Systems** |                                                                                          |
-|-----------------------------------|------------------------------------------------------------------------------------------|
-| **Hierarchical Organizations**    | Multi-level agent structures with specialized roles                                      |
-| **Swarm Intelligence**            | Emergent behavior from large-scale agent interactions                                    |
-| **Dynamic Scaling**               | Ability to scale agent networks based on workload                                        |
-| **Fault Tolerance**               | Robust error handling and system recovery                                                |
-| **Resource Optimization**         | Efficient allocation and utilization of system resources                                 |
-
-This modular architecture allows for flexible deployment scenarios, from simple single-agent applications to complex, distributed multi-agent systems. Each layer is designed to be extensible, allowing developers to customize and enhance functionality while maintaining the core benefits of the framework's enterprise-grade reliability and performance.
-
-
+| Feature | What it does |
+|---------|--------------|
+| **Agents** | LLM-powered agents with tools, memory, planning, retries and autosave |
+| **LLM providers** | OpenAI and compatible APIs (DeepSeek, vLLM, ...), Anthropic Claude, and OpenRouter |
+| **Tools** | Turn any Rust function into a tool with `#[tool]`, or connect MCP servers |
+| **Sequential workflows** | Agents run in a chain, each building on the previous agent's output |
+| **Concurrent workflows** | Several agents work on the same task in parallel |
+| **Graph workflows** | Connect agents in a graph with conditional edges |
+| **Agent rearrange** | Describe a flow as a string, such as `"researcher -> writer, editor"` |
+| **Swarm router** | Choose the multi-agent structure at runtime |
+| **Batch execution** | Run many tasks across many agents at once |
+| **Persistence** | Save agent state and conversations to disk |
 
 ## Architecture
 
@@ -431,7 +618,7 @@ This modular architecture allows for flexible deployment scenarios, from simple 
 | Layer/Component         | Description                                                                                      |
 |------------------------|--------------------------------------------------------------------------------------------------|
 | **Agent Layer**        | Core agent implementation with memory management and tool integration                            |
-| **LLM Provider Layer** | Abstraction for different LLM providers (OpenAI, DeepSeek, etc.)                                 |
+| **LLM Provider Layer** | Abstraction for different LLM providers (OpenAI, Anthropic, OpenRouter, DeepSeek, etc.)           |
 | **Tool System**        | Extensible tool framework for adding capabilities to agents                                       |
 | **MCP Integration**    | Support for Model Context Protocol tools via STDIO and SSE interfaces                            |
 | **Swarm Orchestration**| Coordination of multiple agents for complex workflows                                            |

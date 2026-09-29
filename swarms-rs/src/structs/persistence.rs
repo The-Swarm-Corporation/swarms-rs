@@ -36,8 +36,10 @@ pub async fn append_to_file(
     path: impl AsRef<Path>,
 ) -> Result<(), PersistenceError> {
     // create the parent directory if it doesn't exist
-    if path.as_ref().parent().is_none() {
-        fs::create_dir_all(&path).await?;
+    if let Some(parent) = path.as_ref().parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).await?;
     }
 
     fs::OpenOptions::new()
@@ -74,6 +76,6 @@ pub async fn log_to_file(
 ) -> Result<(), PersistenceError> {
     let message = message.as_ref();
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let log_message = format!("{timestamp} - {message}");
+    let log_message = format!("{timestamp} - {message}\n");
     append_to_file(log_message.as_bytes(), path).await
 }

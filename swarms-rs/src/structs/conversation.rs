@@ -17,6 +17,8 @@ pub enum ConversationError {
     JsonError(#[from] serde_json::Error),
     #[error("FilePersistence error: {0}")]
     FilePersistenceError(#[from] PersistenceError),
+    #[error("Invalid conversation format: {0}")]
+    InvalidFormat(String),
 }
 
 #[derive(Clone, Serialize)]
@@ -82,8 +84,9 @@ impl AgentConversation {
         // Only check message limit if it's set
         if let Some(max) = self.max_messages {
             if self.history.len() >= max {
-                // Remove oldest messages to make room for new ones
-                self.history.drain(0..(self.history.len() - max + 1));
+                // Remove oldest messages to make room for new ones (bounded for max == 0)
+                let excess = (self.history.len() + 1 - max).min(self.history.len());
+                self.history.drain(0..excess);
             }
         }
 
@@ -158,26 +161,45 @@ impl AgentConversation {
         Ok(())
     }
 
-    /// Import the conversation history from a file
+    /// Import the conversation history from a file written by [`Self::export_to_file`]
     pub async fn import_from_file(&mut self, filepath: &Path) -> Result<(), ConversationError> {
         let data = persistence::load_from_file(filepath).await?;
-        let history = data
-            .split(|s| *s == b'\n')
-            .map(|line| {
-                let line = String::from_utf8_lossy(line);
-                // M4n5ter(User): hello
-                let (role, content) = line.split_once(": ").unwrap();
-                if role.contains("(User)") {
-                    let role = Role::User(role.replace("(User)", "").to_string());
-                    let content = Content::Text(content.to_string());
-                    Message { role, content }
+        let text = String::from_utf8_lossy(&data);
+        // Each message starts with a `Name(User): ` or `Name(Assistant): ` header; message
+        // bodies (which include the timestamp line) can span several lines.
+        let mut history: Vec<Message> = Vec::new();
+        for line in text.lines() {
+            let header = line.split_once(": ").and_then(|(role, content)| {
+                if let Some(name) = role.strip_suffix("(User)") {
+                    Some((Role::User(name.to_string()), content))
                 } else {
-                    let role = Role::Assistant(role.replace("(Assistant)", "").to_string());
-                    let content = Content::Text(content.to_string());
-                    Message { role, content }
+                    role.strip_suffix("(Assistant)")
+                        .map(|name| (Role::Assistant(name.to_string()), content))
                 }
-            })
-            .collect();
+            });
+            match (header, history.last_mut()) {
+                (Some((role, content)), _) => history.push(Message {
+                    role,
+                    content: Content::Text(content.to_string()),
+                }),
+                (
+                    None,
+                    Some(Message {
+                        content: Content::Text(text),
+                        ..
+                    }),
+                ) => {
+                    text.push('\n');
+                    text.push_str(line);
+                },
+                (None, None) if line.is_empty() => {},
+                (None, None) => {
+                    return Err(ConversationError::InvalidFormat(format!(
+                        "expected a `Name(User): ` or `Name(Assistant): ` header, found: {line}"
+                    )));
+                },
+            }
+        }
         self.history = history;
         Ok(())
     }

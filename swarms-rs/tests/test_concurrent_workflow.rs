@@ -179,22 +179,58 @@ async fn test_concurrent_workflow_run_no_agents() {
 
 #[tokio::test]
 async fn test_concurrent_workflow_run_duplicate_task() {
+    let output_dir = tempdir().unwrap();
     let workflow = ConcurrentWorkflow::builder()
         .name("DuplicateTaskWorkflow")
+        .metadata_output_dir(output_dir.path().to_str().unwrap())
         .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
         .build();
 
     let task = "duplicate task";
 
-    // First run should succeed
-    let result1 = workflow.run(task).await;
-    assert!(result1.is_ok());
+    // The same task can run again once the previous run has finished,
+    // and each run returns only its own history
+    for _ in 0..2 {
+        let conversation = workflow.run(task).await.unwrap();
+        assert_eq!(conversation.history.len(), 2); // user + Agent1
+    }
 
-    // Second run with same task should fail
-    let result2 = workflow.run(task).await;
+    // But not twice at the same time
+    let (first, second) = tokio::join!(workflow.run(task), workflow.run(task));
+    assert!(first.is_ok());
     assert!(matches!(
-        result2,
+        second,
         Err(ConcurrentWorkflowError::TaskAlreadyExists)
+    ));
+}
+
+#[tokio::test]
+async fn test_concurrent_workflow_retry_after_failure() {
+    // A failed run must not leave the task marked as running
+    let workflow = ConcurrentWorkflow::builder()
+        .name("RetryWorkflow")
+        .add_agent(Box::new(MockAgent::new_with_error("ErrorAgent")))
+        .build();
+
+    for _ in 0..2 {
+        assert!(matches!(
+            workflow.run("retry task").await,
+            Err(ConcurrentWorkflowError::AgentError(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn test_concurrent_workflow_all_agents_fail() {
+    let workflow = ConcurrentWorkflow::builder()
+        .name("AllFailWorkflow")
+        .add_agent(Box::new(MockAgent::new_with_error("ErrorAgent1")))
+        .add_agent(Box::new(MockAgent::new_with_error("ErrorAgent2")))
+        .build();
+
+    assert!(matches!(
+        workflow.run("doomed task").await,
+        Err(ConcurrentWorkflowError::AgentError(_))
     ));
 }
 

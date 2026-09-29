@@ -1,15 +1,16 @@
 use std::{
-    collections::{HashMap, hash_map},
+    collections::{HashMap, HashSet, hash_map},
     sync::Arc,
     time::Duration,
 };
 
 use dashmap::DashMap;
+use futures::future::BoxFuture;
 use petgraph::{
     Direction,
     graph::{EdgeIndex, NodeIndex},
     prelude::StableGraph,
-    visit::EdgeRef,
+    visit::{Dfs, EdgeRef, IntoEdgeReferences},
 };
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -132,39 +133,9 @@ impl DAGWorkflow {
 
     /// Check if the workflow has a cycle
     fn has_cycle(&self) -> bool {
-        // Implementation using DFS to detect cycles
-        let mut visited = vec![false; self.workflow.node_count()];
-        let mut rec_stack = vec![false; self.workflow.node_count()];
-
-        for node in self.workflow.node_indices() {
-            if !visited[node.index()] && self.is_cyclic_util(node, &mut visited, &mut rec_stack) {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn is_cyclic_util(
-        &self,
-        node: NodeIndex,
-        visited: &mut [bool],
-        rec_stack: &mut [bool],
-    ) -> bool {
-        visited[node.index()] = true;
-        rec_stack[node.index()] = true;
-
-        for neighbor in self.workflow.neighbors_directed(node, Direction::Outgoing) {
-            if !visited[neighbor.index()] {
-                if self.is_cyclic_util(neighbor, visited, rec_stack) {
-                    return true;
-                }
-            } else if rec_stack[neighbor.index()] {
-                return true;
-            }
-        }
-
-        rec_stack[node.index()] = false;
-        false
+        // StableGraph keeps indices stable across removals, so index-sized vectors
+        // (node_count) go out of bounds; petgraph's check handles the gaps.
+        petgraph::algo::is_cyclic_directed(&self.workflow)
     }
 
     /// Remove an agent connection
@@ -247,6 +218,19 @@ impl DAGWorkflow {
         // Create a shared tracking state for the entire workflow
         let edge_tracker = Arc::new(DashMap::new());
         let processed_nodes = Arc::new(DashMap::new());
+
+        // Edges from nodes the start agent can't reach will never fire; resolve them
+        // up front as skipped so they don't block a join.
+        let mut reachable = HashSet::new();
+        let mut dfs = Dfs::new(&self.workflow, *start_idx);
+        while let Some(node) = dfs.next(&self.workflow) {
+            reachable.insert(node);
+        }
+        for edge in self.workflow.edge_references() {
+            if !reachable.contains(&edge.source()) {
+                edge_tracker.insert((edge.source(), edge.target()), false);
+            }
+        }
         // Execute the workflow
         self.execute_node(
             *start_idx,
@@ -281,13 +265,13 @@ impl DAGWorkflow {
             return entry.value().clone();
         }
 
-        // Execute the agent with timeout protection
+        // Execute the agent with timeout protection; a timeout is recorded like any other failure
         let result = tokio::time::timeout(
             Duration::from_secs(300), // 5-minute timeout
             self.execute_agent(agent_name, input),
         )
         .await
-        .map_err(|_| GraphWorkflowError::Timeout(agent_name.clone()))?;
+        .unwrap_or_else(|_| Err(GraphWorkflowError::Timeout(agent_name.clone())));
 
         // Store the result
         results.entry(agent_name.clone()).or_insert(result.clone());
@@ -298,101 +282,105 @@ impl DAGWorkflow {
             *last_result = Some(result.clone());
         }
 
-        // If successful, propagate to connected agents
-        match &result {
-            Ok(output) => {
-                // Find all outgoing edges that pass the condition (if any)
-                let valid_edges = self
-                    .workflow
-                    .edges_directed(node_idx, Direction::Outgoing)
-                    .filter(|edge| {
-                        edge.weight()
-                            .condition
-                            .as_ref()
-                            .map(|cond| cond(output))
-                            .unwrap_or(true) // if no condition, always execute
-                    })
-                    .collect::<Vec<_>>();
+        if let Err(e) = &result {
+            tracing::error!("Agent '{}' execution failed: {:?}", agent_name, e);
+        }
 
-                let mut futures = Vec::new();
+        // Hand the output to connected agents, or mark their inputs as skipped on failure
+        self.propagate(
+            node_idx,
+            result.as_ref().ok().map(String::as_str),
+            results,
+            edge_tracker,
+            processed_nodes,
+        )
+        .await;
 
-                for edge in valid_edges {
-                    let source_node = node_idx;
-                    let target_node = edge.target();
-                    let flow = edge.weight().clone();
-                    let results_clone = Arc::clone(&results);
-                    let processed_nodes_clone = Arc::clone(&processed_nodes);
-                    let edge_tracker_clone = Arc::clone(&edge_tracker);
+        result
+    }
 
-                    let future = async move {
-                        // Apply transformation if any
-                        let next_input = flow
-                            .transform
-                            .as_ref()
-                            .map_or_else(|| output.clone(), |transform| transform(output.clone()));
+    /// Resolve every outgoing edge of `node_idx`, then run each target whose incoming
+    /// edges are all resolved.
+    ///
+    /// An edge is taken (`true` in `edge_tracker`) when the node produced `output` and the
+    /// edge's condition passes; otherwise it is skipped (`false`). A target runs once all
+    /// of its incoming edges are resolved and at least one was taken. If none was, the
+    /// target is skipped as well and the skip propagates downstream.
+    fn propagate<'a>(
+        &'a self,
+        node_idx: NodeIndex,
+        output: Option<&'a str>,
+        results: Arc<DashMap<String, Result<String, GraphWorkflowError>>>,
+        edge_tracker: Arc<DashMap<(NodeIndex, NodeIndex), bool>>,
+        processed_nodes: Arc<DashMap<NodeIndex, Vec<(NodeIndex, String)>>>,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let mut targets = Vec::new();
+            for edge in self.workflow.edges_directed(node_idx, Direction::Outgoing) {
+                let target = edge.target();
+                let flow = edge.weight();
+                // if no condition, always take the edge
+                let taken =
+                    output.filter(|out| flow.condition.as_ref().is_none_or(|cond| cond(out)));
+                if let Some(out) = taken {
+                    let next_input = flow
+                        .transform
+                        .as_ref()
+                        .map_or_else(|| out.to_string(), |transform| transform(out.to_string()));
+                    processed_nodes
+                        .entry(target)
+                        .or_default()
+                        .push((node_idx, next_input));
+                }
+                edge_tracker.insert((node_idx, target), taken.is_some());
+                // parallel edges to the same target must not start it twice
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
 
-                        // mark this edge as processed
-                        edge_tracker_clone.insert((source_node, target_node), true);
+            let futures = targets.into_iter().map(|target| {
+                let results = Arc::clone(&results);
+                let edge_tracker = Arc::clone(&edge_tracker);
+                let processed_nodes = Arc::clone(&processed_nodes);
+                async move {
+                    let all_resolved = self
+                        .workflow
+                        .edges_directed(target, Direction::Incoming)
+                        .all(|e| edge_tracker.contains_key(&(e.source(), target)));
+                    if !all_resolved {
+                        return;
+                    }
 
-                        // record the input for this node
-                        processed_nodes_clone
-                            .entry(target_node)
-                            .or_default()
-                            .push((source_node, next_input));
-
-                        // check if all incoming edges have been processed
-                        // if yes, then we can execute the target node
-                        let incoming_edges = self
-                            .workflow
-                            .edges_directed(target_node, Direction::Incoming)
-                            .map(|e| (e.source(), target_node))
-                            .collect::<Vec<_>>();
-
-                        let all_processed = incoming_edges
+                    let aggregated_input = processed_nodes.get(&target).map(|inputs| {
+                        inputs
                             .iter()
-                            .all(|edge| edge_tracker_clone.contains_key(edge));
+                            .map(|(source_idx, input)| {
+                                format!("[From {}] {}\n", self.workflow[*source_idx].name, input)
+                            })
+                            .collect::<String>()
+                    });
 
-                        // only execute if all incoming edges have been processed
-                        if all_processed {
-                            let mut aggregated_input = String::new();
-                            if let Some(inputs) = processed_nodes_clone.get(&target_node) {
-                                for (source_idx, input) in inputs.value() {
-                                    let source_name =
-                                        &self.workflow.node_weight(*source_idx).unwrap().name;
-                                    aggregated_input
-                                        .push_str(&format!("[From {}] {}\n", source_name, input));
-                                }
-                            }
-
-                            // execute the target node with the aggregated input
+                    match aggregated_input {
+                        Some(input) => {
                             if let Err(e) = self
-                                .execute_node(
-                                    target_node,
-                                    aggregated_input,
-                                    results_clone,
-                                    edge_tracker_clone,
-                                    processed_nodes_clone,
-                                )
+                                .execute_node(target, input, results, edge_tracker, processed_nodes)
                                 .await
                             {
                                 tracing::error!("Failed to execute node: {:?}", e);
                             }
-                        }
-                    };
-
-                    futures.push(future);
+                        },
+                        None => {
+                            self.propagate(target, None, results, edge_tracker, processed_nodes)
+                                .await
+                        },
+                    }
                 }
+            });
 
-                // Execute connected agents concurrently
-                futures::future::join_all(futures).await; // TODO: may use another way which can handle errors
-            },
-            Err(e) => {
-                tracing::error!("Agent '{}' execution failed: {:?}", agent_name, e);
-                // TODO: maybe we need to propagate the error to the caller?
-            },
-        }
-
-        result
+            // Execute connected agents concurrently
+            futures::future::join_all(futures).await;
+        })
     }
 
     /// Get the current workflow as a visualization-friendly format

@@ -177,8 +177,9 @@ impl SwarmRouter {
     ///
     ///  # Error
     ///     
+    ///  - SwarmRouterError::SequentialWorkflow: If fails during execution of sequential workflow
     ///  - SwarmRouterError::ConcurrentWorkflow: If fails during execution of concurrent workflow
-    ///  - SwarmRouterError::ConcurrentWorkflow: If fails during execution of concurrent workflow
+    ///  - SwarmRouterError::AgentRearrange: If fails during execution of agent rearrange
     pub async fn run(&self, task: &str) -> Result<AgentConversation, SwarmRouterError> {
         let result = self.inner_run(task).await;
 
@@ -221,13 +222,7 @@ impl SwarmRouter {
         let result = match self {
             SwarmRouter::SequentialWorkflow(wf) => wf.run(task).await?,
             SwarmRouter::ConcurrentWorkflow(wf) => wf.run(task).await?,
-            SwarmRouter::AgentRearrange(_ar) => {
-                // AgentRearrange doesn't return AgentConversation directly, so we create one
-                let conversation = AgentConversation::new("AgentRearrange".to_string());
-                // For now, we'll just return a basic conversation
-                // In the future, we could implement a conversion from AgentRearrange's conversation
-                conversation
-            },
+            SwarmRouter::AgentRearrange(ar) => ar.run_to_conversation(task).await?,
         };
         tracing::info!("Swarm completed successfully");
 
@@ -252,9 +247,8 @@ impl SwarmRouter {
             SwarmRouter::AgentRearrange(ar) => {
                 let results = DashMap::with_capacity(tasks.len());
                 for task in tasks {
-                    // For now, create a basic conversation with the agent rearrange name
-                    let conversation = AgentConversation::new(ar.name().to_string());
-                    results.insert(task, conversation);
+                    let result = ar.run_to_conversation(task.as_str()).await?;
+                    results.insert(task, result);
                 }
                 results
             },

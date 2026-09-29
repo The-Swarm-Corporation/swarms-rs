@@ -77,7 +77,7 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Use Claude 3.5 Sonnet for complex tasks
 //! let model = Anthropic::from_env()
-//!     .set_model("claude-3-5-sonnet-20241022");
+//!     .set_model("claude-sonnet-5-5");
 //!
 //! let agent = SwarmsAgentBuilder::new_with_model(model)
 //!     .agent_name("AdvancedClaude")
@@ -141,7 +141,7 @@
 //! }
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let model = Anthropic::from_env_with_model("claude-3-5-haiku-20241022");
+//! let model = Anthropic::from_env_with_model("claude-haiku-4-5");
 //!
 //! let agent = SwarmsAgentBuilder::new_with_model(model)
 //!     .add_tool(WeatherTool)
@@ -157,11 +157,12 @@
 //!
 //! | Model | Description | Use Case |
 //! |-------|-------------|----------|
-//! | `claude-3-5-sonnet-20241022` | Most intelligent model | Complex analysis, creative tasks |
-//! | `claude-3-5-haiku-20241022` | Fast and efficient | Quick responses, simple tasks |
-//! | `claude-3-opus-20240229` | Most powerful model | Maximum intelligence required |
-//! | `claude-3-sonnet-20240229` | Balanced performance | General purpose |
-//! | `claude-3-haiku-20240307` | Fastest model | High-throughput applications |
+//! | `claude-opus-5-5` | Default; most capable Opus | Complex analysis, agentic work |
+//! | `claude-sonnet-5-5` | Balanced speed and capability | General purpose |
+//! | `claude-haiku-4-5` | Fastest model | Quick responses, high-throughput applications |
+//!
+//! Current models always think and reject `temperature`, so leave
+//! `AgentConfig::temperature` unset unless the chosen model accepts it.
 //!
 //! ## Performance Optimization
 //!
@@ -200,6 +201,9 @@ use crate::llm::{
     self, CompletionError, Model,
     request::{CompletionRequest, CompletionResponse},
 };
+
+/// Model used when none is specified.
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
 
 /// Anthropic API client for Claude models
 ///
@@ -241,13 +245,13 @@ use crate::llm::{
 /// let client = Anthropic::from_env();
 ///
 /// // Create with specific model
-/// let sonnet_client = Anthropic::from_env_with_model("claude-3-5-sonnet-20241022");
+/// let sonnet_client = Anthropic::from_env_with_model("claude-sonnet-5-5");
 ///
 /// // Create with custom configuration
 /// let custom_client = Anthropic::from_url(
 ///     "https://api.anthropic.com",
 ///     "your-api-key"
-/// ).set_model("claude-3-opus-20240229");
+/// ).set_model("claude-opus-5-5");
 /// ```
 #[derive(Clone)]
 pub struct Anthropic {
@@ -256,7 +260,7 @@ pub struct Anthropic {
     /// Anthropic API key for authentication
     #[allow(dead_code)]
     api_key: String,
-    /// Claude model identifier (e.g., "claude-3-5-sonnet-20241022")
+    /// Claude model identifier (e.g., "claude-sonnet-5-5")
     model: String,
     /// Base URL for Anthropic API (default: "https://api.anthropic.com")
     #[allow(dead_code)]
@@ -287,14 +291,14 @@ impl Anthropic {
     pub fn new<S: Into<String>>(api_key: S) -> Self {
         let api_key = api_key.into();
         let base_url = "https://api.anthropic.com".to_string();
-        Self::create_with_cached_fields(api_key, "claude-3-5-sonnet-20241022".to_string(), base_url)
+        Self::create_with_cached_fields(api_key, DEFAULT_MODEL.to_string(), base_url)
     }
 
     /// Create a new Anthropic client with custom base URL
     pub fn from_url<S: Into<String>>(base_url: S, api_key: S) -> Self {
         let api_key = api_key.into();
         let base_url = base_url.into();
-        Self::create_with_cached_fields(api_key, "claude-3-5-sonnet-20241022".to_string(), base_url)
+        Self::create_with_cached_fields(api_key, DEFAULT_MODEL.to_string(), base_url)
     }
 
     /// Create a new Anthropic client from environment variables
@@ -304,7 +308,7 @@ impl Anthropic {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .expect("ANTHROPIC_API_KEY environment variable is not set");
 
-        Self::create_with_cached_fields(api_key, "claude-3-5-sonnet-20241022".to_string(), base_url)
+        Self::create_with_cached_fields(api_key, DEFAULT_MODEL.to_string(), base_url)
     }
 
     /// Create a new Anthropic client with a specific model
@@ -426,41 +430,8 @@ impl Anthropic {
     fn parse_response_efficiently(
         response_text: &str,
     ) -> Result<AnthropicResponse, CompletionError> {
-        // Check for common truncation patterns
-        if response_text.len() < 50 {
-            return Err(CompletionError::Response(format!(
-                "Response too short ({} chars). Response: '{}'",
-                response_text.len(),
-                response_text.chars().take(100).collect::<String>()
-            )));
-        }
-
-        // Check for incomplete JSON
-        let trimmed = response_text.trim();
-        if trimmed.starts_with('{') && !trimmed.ends_with('}') {
-            return Err(CompletionError::Response(format!(
-                "Incomplete JSON object. Response (first 200 chars): '{}...'",
-                response_text.chars().take(200).collect::<String>()
-            )));
-        }
-
-        if trimmed.starts_with('[') && !trimmed.ends_with(']') {
-            return Err(CompletionError::Response(format!(
-                "Incomplete JSON array. Response (first 200 chars): '{}...'",
-                response_text.chars().take(200).collect::<String>()
-            )));
-        }
-
-        // Check for unterminated strings
-        let quote_count = response_text.chars().filter(|&c| c == '"').count();
-        if quote_count % 2 != 0 {
-            return Err(CompletionError::Response(format!(
-                "Unterminated string in JSON. Odd number of quotes ({}). Response: '{}'",
-                quote_count,
-                response_text.chars().take(200).collect::<String>()
-            )));
-        }
-
+        // serde reports truncated or malformed JSON itself; hand-rolled checks such as
+        // counting quote characters reject valid bodies containing escaped quotes.
         serde_json::from_str::<AnthropicResponse>(response_text).map_err(|e| {
             CompletionError::Response(format!(
                 "Failed to parse Anthropic response: {}. Response length: {} chars. Response preview: '{}'",
@@ -538,7 +509,7 @@ impl Anthropic {
     /// - Validates URL format once during client creation
     /// - Pre-parses URI to avoid repeated parsing
     fn prepare_messages_uri(base_url: &str) -> Result<Uri, CompletionError> {
-        let uri_str = format!("{}/v1/messages", base_url);
+        let uri_str = format!("{}/v1/messages", base_url.trim_end_matches('/'));
         uri_str.parse::<Uri>().map_err(|e| {
             CompletionError::Request(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -553,6 +524,7 @@ impl Anthropic {
 struct AnthropicRequest {
     model: String,
     max_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -569,24 +541,27 @@ struct AnthropicMessage {
 }
 
 /// Anthropic content structure
+///
+/// Tagged on `type` so blocks we don't consume (`thinking`, `redacted_thinking`,
+/// server tool blocks, ...) deserialize as `Unknown` instead of failing the whole
+/// response or being mistaken for a client tool call.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicContent {
     Text {
-        r#type: String,
         text: String,
     },
     ToolUse {
-        r#type: String,
         id: String,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
-        r#type: String,
-        tool_call_id: String,
+        tool_use_id: String,
         content: Vec<AnthropicToolResultContent>,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 /// Anthropic tool structure
@@ -685,14 +660,25 @@ impl Model for Anthropic {
                 }
             }
 
-            // Add the current prompt as a user message
-            if let Some(rag_text) = request.prompt.rag_text() {
+            // Add the current prompt, keeping every part (tool results included), not
+            // just its first text part.
+            let (role, content) = match request.prompt {
+                llm::completion::Message::User { content } => {
+                    ("user", convert_user_content_to_anthropic(content)?)
+                },
+                llm::completion::Message::Assistant { content } => (
+                    "assistant",
+                    convert_assistant_content_to_anthropic(content)?,
+                ),
+            };
+            let content: Vec<_> = content
+                .into_iter()
+                .filter(|c| !matches!(c, AnthropicContent::Text { text } if text.is_empty()))
+                .collect();
+            if !content.is_empty() {
                 messages.push(AnthropicMessage {
-                    role: "user".to_string(),
-                    content: vec![AnthropicContent::Text {
-                        r#type: "text".to_string(),
-                        text: rag_text,
-                    }],
+                    role: role.to_string(),
+                    content,
                 });
             }
 
@@ -754,12 +740,6 @@ impl Model for Anthropic {
                 }
             }
 
-            if response_bytes.is_empty() {
-                return Err(CompletionError::Response(
-                    "Empty response body from Anthropic API".to_string(),
-                ));
-            }
-
             let response_text = String::from_utf8(response_bytes).map_err(|e| {
                 CompletionError::Response(format!("Invalid UTF-8 in response: {}", e))
             })?;
@@ -788,6 +768,12 @@ impl Model for Anthropic {
                 }
             }
 
+            if response_text.is_empty() {
+                return Err(CompletionError::Response(
+                    "Empty response body from Anthropic API".to_string(),
+                ));
+            }
+
             // Parse successful response using optimized helper function
             let anthropic_response = Self::parse_response_efficiently(&response_text)?;
 
@@ -812,10 +798,7 @@ fn convert_user_content_to_anthropic(
     for item in content {
         match item {
             llm::completion::UserContent::Text(text) => {
-                result.push(AnthropicContent::Text {
-                    r#type: "text".to_string(),
-                    text: text.text,
-                });
+                result.push(AnthropicContent::Text { text: text.text });
             },
             llm::completion::UserContent::ToolResult(tool_result) => {
                 let content: Result<Vec<AnthropicToolResultContent>, CompletionError> = tool_result
@@ -839,8 +822,7 @@ fn convert_user_content_to_anthropic(
                 let content = content?;
 
                 result.push(AnthropicContent::ToolResult {
-                    r#type: "tool_result".to_string(),
-                    tool_call_id: tool_result.id,
+                    tool_use_id: tool_result.id,
                     content,
                 });
             },
@@ -866,14 +848,10 @@ fn convert_assistant_content_to_anthropic(
     for item in content {
         match item {
             llm::completion::AssistantContent::Text(text) => {
-                result.push(AnthropicContent::Text {
-                    r#type: "text".to_string(),
-                    text: text.text,
-                });
+                result.push(AnthropicContent::Text { text: text.text });
             },
             llm::completion::AssistantContent::ToolCall(tool_call) => {
                 result.push(AnthropicContent::ToolUse {
-                    r#type: "tool_use".to_string(),
                     id: tool_call.id,
                     name: tool_call.function.name,
                     input: tool_call.function.arguments,
@@ -903,10 +881,9 @@ fn convert_anthropic_response_to_internal(
                     id, name, input,
                 ));
             },
-            AnthropicContent::ToolResult { .. } => {
-                // Tool results are handled in user messages, not assistant responses
-                continue;
-            },
+            // Tool results only appear in user messages; thinking and other block
+            // types carry nothing the agent consumes.
+            AnthropicContent::ToolResult { .. } | AnthropicContent::Unknown => continue,
         }
     }
 
@@ -921,7 +898,7 @@ mod tests {
     fn test_anthropic_creation() {
         let anthropic = Anthropic::new("test-key");
         assert_eq!(anthropic.api_key, "test-key");
-        assert_eq!(anthropic.model, "claude-3-5-sonnet-20241022");
+        assert_eq!(anthropic.model, "claude-opus-5-5");
         assert_eq!(anthropic.base_url, "https://api.anthropic.com");
         assert_eq!(anthropic.api_key_header, "test-key");
         assert_eq!(
@@ -932,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_anthropic_with_custom_model() {
-        let anthropic = Anthropic::new("test-key").set_model("claude-3-haiku-20240307");
-        assert_eq!(anthropic.model, "claude-3-haiku-20240307");
+        let anthropic = Anthropic::new("test-key").set_model("claude-haiku-4-5");
+        assert_eq!(anthropic.model, "claude-haiku-4-5");
     }
 }

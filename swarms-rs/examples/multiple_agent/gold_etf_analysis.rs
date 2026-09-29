@@ -300,7 +300,7 @@ async fn main() -> Result<()> {
     }
 
     // Create Anthropic client for agents
-    let anthropic_client = Anthropic::from_env_with_model("claude-3-5-haiku-20241022");
+    let anthropic_client = Anthropic::from_env_with_model("claude-haiku-4-5");
 
     // Create specialized financial analysis agents (without tools)
     let technical_analysis_agent = SwarmsAgentBuilder::new_with_model(anthropic_client.clone())

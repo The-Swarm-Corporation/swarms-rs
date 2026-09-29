@@ -110,10 +110,7 @@ use tabled::{
     settings::{Alignment, Modify, Style, object::Rows},
 };
 use thiserror::Error;
-use tokio::{
-    process::Command,
-    sync::{Mutex, mpsc},
-};
+use tokio::{process::Command, sync::Mutex};
 
 use crate::{
     self as swarms_rs,
@@ -353,10 +350,24 @@ where
     /// # }
     /// ```
     pub fn add_tool<T: Tool + 'static>(mut self, tool: T) -> Self {
-        self.tools.push(tool.definition());
-        self.tools_impl
-            .insert(tool.name().to_string(), Arc::new(tool) as Arc<dyn ToolDyn>);
+        let definition = tool.definition();
+        self.register_tool(definition, Arc::new(tool) as Arc<dyn ToolDyn>);
         self
+    }
+
+    /// Register a tool; a later tool with the same name replaces the earlier one, so the
+    /// model is never offered duplicate names (which some providers reject).
+    fn register_tool(&mut self, definition: ToolDefinition, tool: Arc<dyn ToolDyn>) {
+        if let Some(existing) = self.tools.iter_mut().find(|t| t.name == definition.name) {
+            tracing::warn!(
+                "Tool '{}' registered more than once; keeping the last one",
+                definition.name
+            );
+            *existing = definition.clone();
+        } else {
+            self.tools.push(definition.clone());
+        }
+        self.tools_impl.insert(definition.name, tool);
     }
 
     /// Adds tools from an MCP (Model Context Protocol) server via SSE (Server-Sent Events).
@@ -496,7 +507,9 @@ where
                     self.config.name
                 );
             }
-            self.tools.insert(0, ToolDyn::definition(&TaskEvaluator));
+            let definition = ToolDyn::definition(&TaskEvaluator);
+            self.tools.retain(|t| t.name != definition.name);
+            self.tools.insert(0, definition);
             self.tools_impl.insert(
                 ToolDyn::name(&TaskEvaluator),
                 Arc::new(TaskEvaluator) as Arc<dyn ToolDyn>,
@@ -542,7 +555,7 @@ where
     }
 
     pub fn temperature(mut self, temperature: f64) -> Self {
-        self.config.temperature = temperature;
+        self.config.temperature = Some(temperature);
         self
     }
 
@@ -953,26 +966,32 @@ where
             system_prompt: self.system_prompt.clone(),
             chat_history,
             tools: self.tools.clone(),
-            temperature: Some(self.config.temperature),
+            temperature: self.config.temperature,
             max_tokens: Some(self.config.max_tokens),
         };
 
         let response = self.model.completion(request).await?;
+        if response.choice.is_empty() {
+            return Err(AgentError::NoChoiceFound);
+        }
 
-        let choice = response.choice.first().ok_or(AgentError::NoChoiceFound)?;
-        match ToOwned::to_owned(choice) {
-            llm::completion::AssistantContent::Text(text) => Ok(ChatResponse::Text(text.text)), // <--- return Text
-            llm::completion::AssistantContent::ToolCall(tool_call) => {
-                let mut all_tool_calls = vec![tool_call.function];
-                all_tool_calls.extend(response.choice.iter().skip(1).filter_map(|choice| {
-                    match ToOwned::to_owned(choice) {
-                        llm::completion::AssistantContent::Text(_) => None,
-                        llm::completion::AssistantContent::ToolCall(tool_call) => {
-                            Some(tool_call.function)
-                        },
-                    }
-                }));
-
+        // Models often write a sentence before calling a tool, so tool calls can follow
+        // text in any position.
+        let mut texts = Vec::new();
+        let mut all_tool_calls = Vec::new();
+        for choice in response.choice {
+            match choice {
+                llm::completion::AssistantContent::Text(text) => texts.push(text.text),
+                llm::completion::AssistantContent::ToolCall(tool_call) => {
+                    all_tool_calls.push(tool_call.function)
+                },
+            }
+        }
+        if all_tool_calls.is_empty() {
+            return Ok(ChatResponse::Text(texts.join("\n")));
+        }
+        {
+            {
                 // Call tools concurrently
                 let results = Arc::new(Mutex::new(Vec::new()));
                 if self.config.concurrent_tool_call_enabled {
@@ -1024,20 +1043,34 @@ where
                         .await;
                 } else {
                     for tool_call in all_tool_calls {
-                        let tool = Arc::clone(
-                            self.tools_impl
-                                .get(&tool_call.name)
-                                .ok_or(AgentError::ToolNotFound(tool_call.name.clone()))?
-                                .deref(),
-                        );
                         let args = tool_call.arguments.to_string();
-                        // execute tool
-                        let result_str = tool.call(args.clone()).await?;
-                        // collect results
+                        // Like the concurrent path, report failures to the model as the tool's
+                        // result instead of aborting (and later re-running) the whole batch.
+                        let result = match self.tools_impl.get(&tool_call.name) {
+                            Some(tool) => {
+                                let tool = Arc::clone(tool.deref());
+                                match tool.call(args.clone()).await {
+                                    Ok(result) => result,
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to call tool<{}>, args: {}, error: {}",
+                                            tool_call.name,
+                                            args,
+                                            e
+                                        );
+                                        e.to_string()
+                                    },
+                                }
+                            },
+                            None => {
+                                tracing::error!("Tool not found: {}", tool_call.name);
+                                "Tool not found".to_owned()
+                            },
+                        };
                         results.lock().await.push(ToolCallOutput {
-                            name: tool_call.name.clone(),
+                            name: tool_call.name,
                             args,
-                            result: result_str,
+                            result,
                         });
                     }
                 }
@@ -1045,7 +1078,7 @@ where
                 Ok(ChatResponse::ToolCalls(
                     Arc::clone(&results).lock().await.clone(),
                 ))
-            },
+            }
         }
     }
 
@@ -1069,7 +1102,7 @@ where
             system_prompt: self.system_prompt.clone(),
             chat_history: vec![],
             tools: vec![],
-            temperature: Some(self.config.temperature),
+            temperature: self.config.temperature,
             max_tokens: Some(self.config.max_tokens),
         };
 
@@ -1080,9 +1113,22 @@ where
             e
         })?;
 
-        let choice = response.choice.first().ok_or(AgentError::NoChoiceFound)?;
-        let result = match ToOwned::to_owned(choice) {
-            llm::completion::AssistantContent::Text(text) => {
+        // Replies can be split across several text blocks; no tools are offered here, so
+        // any tool call block is ignored.
+        let texts: Vec<String> = response
+            .choice
+            .into_iter()
+            .filter_map(|choice| match choice {
+                llm::completion::AssistantContent::Text(text) => Some(text.text),
+                llm::completion::AssistantContent::ToolCall(_) => None,
+            })
+            .collect();
+        if texts.is_empty() {
+            return Err(AgentError::NoChoiceFound);
+        }
+        let text = texts.join("\n");
+        let result = {
+            {
                 let duration = start_time.elapsed().as_millis() as u64;
                 if self.config.verbose {
                     log_perf!(info, "LLM", "completion_time", duration, "ms");
@@ -1093,24 +1139,21 @@ where
                         "Prompt Response",
                         "Received response ({}ms): '{}'",
                         duration,
-                        text.text.chars().take(100).collect::<String>()
+                        text.chars().take(100).collect::<String>()
                     );
                 }
-                Ok(text.text)
-            },
-            llm::completion::AssistantContent::ToolCall(_) => {
-                unreachable!("We don't provide tools")
-            },
+                Ok(text)
+            }
         };
 
         result
     }
 
     pub fn tool(mut self, tool: impl ToolDyn + 'static) -> Self {
-        let toolname = tool.name();
         let definition = tool.definition();
+        self.tools.retain(|t| t.name != definition.name);
         self.tools.push(definition);
-        self.tools_impl.insert(toolname, Arc::new(tool));
+        self.tools_impl.insert(tool.name(), Arc::new(tool));
         self
     }
 
@@ -1124,7 +1167,7 @@ where
     }
 
     /// Handle error in attempts
-    async fn handle_error_in_attempts(&self, task: &str, error: AgentError, attempt: u32) {
+    async fn handle_error_in_attempts(&self, task: &str, error: &AgentError, attempt: u32) {
         let err_msg = format!("Attempt {}, task: {}, failed: {}", attempt + 1, task, error);
         tracing::error!(err_msg);
 
@@ -1273,6 +1316,10 @@ where
                         self.config.max_loops,
                         task
                     )
+                } else if self.config.plan_enabled && self.config.planning_prompt.is_some() {
+                    // The plan is the last (assistant) message in memory. Ending the request on
+                    // an assistant turn makes it a prefill, which current models reject.
+                    current_prompt = "Carry out the task above, following your plan.".to_owned();
                 } else {
                     // first loop
                     // task is already in short_memory, short_memory will be passed to llm
@@ -1281,10 +1328,16 @@ where
                 }
 
                 let mut success = false;
+                let mut last_error = None;
                 // let task_prompt = self.short_memory.0.get(&task).unwrap().to_string(); // Safety: task is in short_memory
-                for attempt in 0..self.config.retry_attempts {
+                for attempt in 0..self.config.retry_attempts.max(1) {
                     if success {
                         break;
+                    }
+                    if attempt > 0 {
+                        // Back off before retrying so rate limits and transient errors can clear.
+                        tokio::time::sleep(std::time::Duration::from_millis(500 << attempt.min(5)))
+                            .await;
                     }
 
                     // if self.long_term_memory.is_some() && self.config.rag_every_loop {
@@ -1295,24 +1348,21 @@ where
                     //     };
                     // }
 
-                    // Generate response using LLM
-                    let history = self.short_memory.0.get(&task).unwrap(); // Safety: task is in short_memory
-                    let current_chat_response =
-                        match self.chat(&current_prompt, history.deref()).await {
-                            Ok(response) => response,
-                            Err(e) => {
-                                self.handle_error_in_attempts(&task, e, attempt).await;
-                                continue;
-                            },
-                        };
-                    // needed to drop the lock
-                    // if use:
-                    // let history = (&(*self.short_memory.0.get(&task).unwrap())).into();
-                    // we don't need to drop the lock, because the lock is owned by temporary variable
-                    drop(history);
+                    // Generate response using LLM. Copy the history out so no DashMap guard is
+                    // held across the LLM and tool calls (other runs write to the same shard).
+                    let history: Vec<llm::completion::Message> =
+                        (&*self.short_memory.0.get(&task).unwrap()).into(); // Safety: task is in short_memory
+                    let current_chat_response = match self.chat(&current_prompt, history).await {
+                        Ok(response) => response,
+                        Err(e) => {
+                            self.handle_error_in_attempts(&task, &e, attempt).await;
+                            last_error = Some(e);
+                            continue;
+                        },
+                    };
 
                     // handle ChatResponse
-                    let mut assistant_memory_content = String::new();
+                    let assistant_memory_content: String;
                     let mut is_task_evaluator_called = false;
                     match current_chat_response {
                         ChatResponse::Text(text) => {
@@ -1349,21 +1399,11 @@ where
                                             match task_status {
                                                 TaskStatus::Complete => {
                                                     task_complete = true;
-                                                    // Task is complete
-                                                    // This may be a bit redundant, but it's here for clarity
-                                                    // last_response_text = format!(
-                                                    //     "Task marked as complete by task_evaluator. Result: {}",
-                                                    //     tool_call.result
-                                                    // );
-                                                    assistant_memory_content = formatted;
-                                                    // Store the final tool call in memory
                                                 },
                                                 TaskStatus::Incomplete { context } => {
                                                     task_complete = false;
                                                     // If not complete, store the context for the next loop's prompt
                                                     last_response_text = context;
-                                                    // Keep the raw tool result for memory
-                                                    assistant_memory_content = formatted;
                                                 },
                                             }
                                         },
@@ -1380,8 +1420,6 @@ where
                                                 "Error parsing task_evaluator result. Raw output: {}",
                                                 tool_call.result
                                             );
-                                            assistant_memory_content = formatted;
-                                            // Store the problematic call
                                         },
                                     }
                                 } else {
@@ -1396,14 +1434,12 @@ where
                                     }
                                 }
                             }
-                            // If multiple tools were called, or if task_evaluator wasn't the only one,
-                            // ensure assistant_memory_content reflects all calls.
-                            if assistant_memory_content.is_empty() || !is_task_evaluator_called {
-                                assistant_memory_content = formatted_tool_results.clone();
-                                // Update last_response_text if it wasn't set by task_evaluator
-                                if !is_task_evaluator_called {
-                                    last_response_text = formatted_tool_results;
-                                }
+                            // Memory keeps every tool's result, including those called alongside
+                            // task_evaluator.
+                            assistant_memory_content = formatted_tool_results.clone();
+                            // Update last_response_text if it wasn't set by task_evaluator
+                            if !is_task_evaluator_called {
+                                last_response_text = formatted_tool_results;
                             }
                         },
                     }
@@ -1422,7 +1458,19 @@ where
                 }
 
                 if !success {
-                    // Exit the loop if all retry failed
+                    let error = last_error.unwrap_or(AgentError::NoChoiceFound);
+                    // Nothing was produced at all: report the failure instead of returning the
+                    // bare task as if it were an answer.
+                    if loop_count == 0 {
+                        return Err(error);
+                    }
+                    // Later loops refine earlier output; keep what we have.
+                    tracing::warn!(
+                        "Agent<{}> stopping at loop {} after all retries failed: {}",
+                        self.config.name,
+                        loop_count + 1,
+                        error
+                    );
                     break;
                 }
 
@@ -1503,20 +1551,21 @@ where
 
         Box::pin(async move {
             let agent_arc = Arc::new(self);
-            let (tx, mut rx) = mpsc::channel(1);
-            stream::iter(tasks)
-                .for_each_concurrent(None, |task| {
-                    let tx = tx.clone();
+            let concurrency = tasks.len().max(1);
+            // `buffered` runs every task concurrently and yields results in task order.
+            let outcomes: Vec<(String, Result<String, AgentError>)> = stream::iter(tasks)
+                .map(|task| {
                     let agent = Arc::clone(&agent_arc);
                     async move {
                         let result = agent.run(task.clone()).await;
-                        tx.send((task, result)).await.unwrap(); // Safety: we know rx is not dropped
+                        (task, result)
                     }
                 })
+                .buffered(concurrency)
+                .collect()
                 .await;
-            drop(tx);
 
-            while let Some((task, result)) = rx.recv().await {
+            for (task, result) in outcomes {
                 match result {
                     Ok(result) => {
                         results.push(result);
@@ -1567,9 +1616,13 @@ where
                     tokio::fs::create_dir_all(save_state_dir).await?;
                 }
 
-                let path = save_state_dir
-                    .join(format!("{}_{}", self.name(), task_hash))
-                    .with_extension("json");
+                // Build the file name directly: `with_extension` would cut an agent name
+                // such as "gpt-4.1-agent" at its first dot.
+                let path = save_state_dir.join(format!(
+                    "{}_{}.json",
+                    self.name().replace(['/', '\\'], "_"),
+                    task_hash
+                ));
 
                 let json = serde_json::to_string_pretty(&self.short_memory.0.get(&task).unwrap())?; // TODO: Safety?
                 persistence::save_to_file(&json, path).await?;

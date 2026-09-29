@@ -62,7 +62,7 @@ impl AgentConfigBuilder {
     }
 
     pub fn temperature(mut self, temperature: f64) -> Self {
-        Arc::make_mut(&mut self.config).temperature = temperature;
+        Arc::make_mut(&mut self.config).temperature = Some(temperature);
         self
     }
 
@@ -130,7 +130,7 @@ impl AgentConfigBuilder {
         let config = &self.config;
         if config.verbose {
             log::info!(
-                "🎯 Agent configuration built: {} (ID: {}) - Max loops: {}, Temperature: {}, Max tokens: {}",
+                "🎯 Agent configuration built: {} (ID: {}) - Max loops: {}, Temperature: {:?}, Max tokens: {}",
                 config.name,
                 config.id,
                 config.max_loops,
@@ -149,7 +149,9 @@ pub struct AgentConfig {
     pub name: String,
     pub user_name: String,
     pub description: Option<String>,
-    pub temperature: f64,
+    /// Sampling temperature. `None` (the default) leaves it to the provider; current
+    /// Claude models and OpenAI reasoning models reject any explicit value.
+    pub temperature: Option<f64>,
     pub max_loops: u32,
     pub max_tokens: u64,
     pub plan_enabled: bool,
@@ -225,7 +227,7 @@ impl Default for AgentConfig {
             name: "Agent".to_owned(),
             user_name: "User".to_owned(),
             description: None,
-            temperature: 0.7,
+            temperature: None,
             max_loops: 1,
             max_tokens: 8192,
             plan_enabled: false,

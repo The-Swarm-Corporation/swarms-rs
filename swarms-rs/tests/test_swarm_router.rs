@@ -2,7 +2,113 @@
 //! Note: Full SwarmRouter integration tests require actual SwarmsAgent instances
 //! which are tested in other integration test files
 
-use swarms_rs::structs::swarms_router::{SwarmRouterConfig, SwarmRouterError, SwarmType};
+use futures::future::BoxFuture;
+use swarms_rs::structs::agent::{Agent, AgentError};
+use swarms_rs::structs::rearrange::AgentRearrange;
+use swarms_rs::structs::swarms_router::{
+    SwarmRouter, SwarmRouterConfig, SwarmRouterError, SwarmType,
+};
+
+#[derive(Clone)]
+struct MockAgent {
+    name: String,
+    response: String,
+}
+
+impl MockAgent {
+    fn boxed(name: &str, response: &str) -> Box<dyn Agent> {
+        Box::new(Self {
+            name: name.to_string(),
+            response: response.to_string(),
+        })
+    }
+}
+
+impl Agent for MockAgent {
+    fn run(&self, _task: String) -> BoxFuture<Result<String, AgentError>> {
+        let response = self.response.clone();
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn run_multiple_tasks(
+        &mut self,
+        _tasks: Vec<String>,
+    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    fn plan(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn save_task_state(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn is_response_complete(&self, _response: String) -> bool {
+        true
+    }
+
+    fn id(&self) -> String {
+        self.name.clone()
+    }
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn description(&self) -> String {
+        format!("Mock agent: {}", self.name)
+    }
+
+    fn clone_box(&self) -> Box<dyn Agent> {
+        Box::new(self.clone())
+    }
+}
+
+#[tokio::test]
+async fn test_router_agent_rearrange_runs_flow() {
+    let rearrange = AgentRearrange::builder()
+        .add_agent(MockAgent::boxed("agent1", "response1"))
+        .add_agent(MockAgent::boxed("agent2", "response2"))
+        .flow("agent1 -> agent2")
+        .build();
+    let router = SwarmRouter::AgentRearrange(rearrange);
+
+    let transcript = router.run("route this").await.unwrap().to_string();
+    assert!(transcript.contains("route this"));
+    assert!(transcript.contains("response1"));
+    assert!(transcript.contains("response2"));
+
+    let results = router
+        .batch_run(vec!["task1".to_string(), "task2".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    for entry in results.iter() {
+        let transcript = entry.value().to_string();
+        assert!(transcript.contains(entry.key().as_str()));
+        assert!(transcript.contains("response2"));
+    }
+}
+
+#[tokio::test]
+async fn test_router_agent_rearrange_surfaces_errors() {
+    // No flow configured: the rearrange fails validation, and the router must say so
+    let rearrange = AgentRearrange::builder()
+        .add_agent(MockAgent::boxed("agent1", "response1"))
+        .build();
+    let router = SwarmRouter::AgentRearrange(rearrange);
+
+    assert!(matches!(
+        router.run("task").await,
+        Err(SwarmRouterError::AgentRearrangeError(_))
+    ));
+}
 
 #[test]
 fn test_swarm_router_config_default() {

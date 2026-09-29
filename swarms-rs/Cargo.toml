@@ -23,7 +23,7 @@ url = "2.5"
 tokio-rustls = "0.26.2"
 tokio = { version = "1", features = ["full"] }
 thiserror = "2"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 twox-hash = "2.1"
 zstd = "0.13.3"
@@ -88,6 +88,10 @@ name = "anthropic_claude_agent"
 path = "examples/single_agent/anthropic_claude_agent.rs"
 
 [[example]]
+name = "openrouter_agent"
+path = "examples/single_agent/openrouter_agent.rs"
+
+[[example]]
 name = "gold_etf_analysis"
 path = "examples/multiple_agent/gold_etf_analysis.rs"
 
@@ -98,3 +102,55 @@ path = "examples/multiple_agent/swarm_router.rs"
 [[example]]
 name = "pretty_print_example"
 path = "examples/single_agent/pretty_print_example.rs"
+
+[[example]]
+name = "openrouter_tools"
+path = "examples/single_agent/openrouter_tools.rs"
+
+[[example]]
+name = "openrouter_model_panel"
+path = "examples/multiple_agent/openrouter_model_panel.rs"
+
+[[example]]
+name = "openrouter_pipeline"
+path = "examples/multiple_agent/openrouter_pipeline.rs"
+
+[[example]]
+name = "simple_agent"
+path = "examples/single_agent/simple_agent.rs"
+
+[[example]]
+name = "tool"
+path = "examples/single_agent/tool.rs"
+
+[[example]]
+name = "mcp_tool"
+path = "examples/single_agent/mcp_tool.rs"
+
+[[example]]
+name = "agent_rearrange_example"
+path = "examples/multiple_agent/agent_rearrange_example.rs"
+
+[[example]]
+name = "batch_executor_example"
+path = "examples/multiple_agent/batch_executor_example.rs"
+
+[[example]]
+name = "concurrent_workflow_run"
+path = "examples/multiple_agent/concurrent_workflow_run.rs"
+
+[[example]]
+name = "concurrent_workflow_run_batch"
+path = "examples/multiple_agent/concurrent_workflow_run_batch.rs"
+
+[[example]]
+name = "graph_workflow"
+path = "examples/multiple_agent/graph_workflow.rs"
+
+[[example]]
+name = "sequential_workflow"
+path = "examples/multiple_agent/sequential_workflow.rs"
+
+[[example]]
+name = "test_concurrent"
+path = "examples/multiple_agent/test_concurrent.rs"

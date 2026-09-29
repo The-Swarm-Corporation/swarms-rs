@@ -7,7 +7,7 @@ use tracing::{debug, error, info};
 
 use crate::structs::{
     agent::{Agent, AgentError},
-    conversation::AgentConversation,
+    conversation::{AgentConversation, Role},
 };
 
 /// Error type for batch execution
@@ -124,11 +124,12 @@ impl AgentBatchExecutor {
         }
 
         let results = DashMap::with_capacity(tasks.len());
-        let (tx, mut rx) = mpsc::channel(tasks.len());
+        // A limit of 0 would stall `buffer_unordered` forever.
         let max_concurrent = self
             .config
             .max_concurrent_tasks
-            .unwrap_or_else(|| self.calculate_optimal_threads());
+            .unwrap_or_else(|| self.calculate_optimal_threads())
+            .max(1);
 
         info!(
             "Starting batch execution with {} tasks across {} agents (max concurrent: {})",
@@ -137,48 +138,39 @@ impl AgentBatchExecutor {
             max_concurrent
         );
 
-        // Execute tasks concurrently
-        stream::iter(tasks)
-            .for_each_concurrent(max_concurrent, |task| {
-                let tx = tx.clone();
+        // Execute tasks concurrently; each task runs through every agent in order.
+        let task_outputs: Vec<_> = stream::iter(tasks)
+            .map(|task| {
                 let agents = &self.agents;
                 async move {
+                    let mut outputs = Vec::with_capacity(agents.len());
                     for agent in agents {
-                        match agent.run(task.clone()).await {
-                            Ok(response) => {
-                                let mut conversation = AgentConversation::new(agent.name());
-                                conversation.add(
-                                    crate::structs::conversation::Role::Assistant(agent.name()),
-                                    response,
-                                );
-                                tx.send((task.clone(), Ok(conversation))).await.unwrap();
-                            },
-                            Err(e) => {
-                                error!(
-                                    "Agent {} failed to process task '{}': {}",
-                                    agent.name(),
-                                    task,
-                                    e
-                                );
-                                tx.send((task.clone(), Err(e))).await.unwrap();
-                            },
-                        }
+                        outputs.push((agent.name(), agent.run(task.clone()).await));
                     }
+                    (task, outputs)
                 }
             })
+            .buffer_unordered(max_concurrent)
+            .collect()
             .await;
 
-        drop(tx);
-
-        // Collect results
-        while let Some((task, result)) = rx.recv().await {
-            match result {
-                Ok(conversation) => {
-                    results.insert(task, conversation);
-                },
-                Err(e) => {
-                    error!("Task failed: {}", e);
-                },
+        // Collect every agent's response for a task into one conversation
+        for (task, outputs) in task_outputs {
+            for (agent_name, output) in outputs {
+                match output {
+                    Ok(response) => {
+                        results
+                            .entry(task.clone())
+                            .or_insert_with(|| AgentConversation::new(agent_name.clone()))
+                            .add(Role::Assistant(agent_name), response);
+                    },
+                    Err(e) => {
+                        error!(
+                            "Agent {} failed to process task '{}': {}",
+                            agent_name, task, e
+                        );
+                    },
+                }
             }
         }
 

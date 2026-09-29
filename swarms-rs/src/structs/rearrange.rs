@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, hash_map},
+    path::Path,
+};
 
 use chrono::Local;
 use dashmap::DashSet;
@@ -157,16 +160,30 @@ impl AgentRearrangeBuilder {
     }
 
     /// Build the AgentRearrange instance
+    ///
+    /// Agents that share a name are reported by [`AgentRearrange::validate_flow`]
+    /// (and therefore by every run) as [`AgentRearrangeError::DuplicateAgentNames`].
     pub fn build(self) -> AgentRearrange {
+        let mut agents = HashMap::with_capacity(self.agents.len());
+        let mut duplicate_agent_names = Vec::new();
+        for agent in self.agents {
+            match agents.entry(agent.name()) {
+                hash_map::Entry::Occupied(entry) => {
+                    tracing::error!("Duplicate agent name in AgentRearrange: {}", entry.key());
+                    duplicate_agent_names.push(entry.key().clone());
+                },
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(agent);
+                },
+            }
+        }
+
         AgentRearrange {
             id: Uuid::new_v4().to_string(),
             name: self.name,
             description: self.description,
-            agents: self
-                .agents
-                .into_iter()
-                .map(|agent| (agent.name(), agent))
-                .collect(),
+            agents,
+            duplicate_agent_names,
             flow: self.flow.unwrap_or_default(),
             max_loops: if self.max_loops > 0 {
                 self.max_loops
@@ -230,6 +247,8 @@ pub struct AgentRearrange {
     description: String,
     /// Map of agent names to Agent objects
     agents: HashMap<String, Box<dyn Agent>>,
+    /// Names of agents dropped at build time because another agent had the same name
+    duplicate_agent_names: Vec<String>,
     /// Flow pattern defining task execution order
     flow: String,
     /// Maximum number of execution loops
@@ -265,6 +284,7 @@ impl Default for AgentRearrange {
             name: "AgentRearrange".to_string(),
             description: "A swarm of agents for rearranging tasks.".to_string(),
             agents: HashMap::new(),
+            duplicate_agent_names: Vec::new(),
             flow: String::new(),
             max_loops: 1,
             verbose: false,
@@ -333,14 +353,22 @@ impl AgentRearrange {
     /// ```rust,no_run
     /// # use swarms_rs::structs::rearrange::AgentRearrange;
     /// let mut rearrange = AgentRearrange::default();
-    /// // rearrange.add_agent(my_agent);
+    /// // rearrange.add_agent(my_agent)?;
     /// ```
-    pub fn add_agent(&mut self, agent: Box<dyn Agent>) {
+    ///
+    /// # Errors
+    ///
+    /// - `DuplicateAgentNames` if an agent with the same name is already registered
+    pub fn add_agent(&mut self, agent: Box<dyn Agent>) -> Result<(), AgentRearrangeError> {
         let agent_name = agent.name();
+        if self.agents.contains_key(&agent_name) {
+            return Err(AgentRearrangeError::DuplicateAgentNames);
+        }
         if self.verbose {
             tracing::info!("Adding agent {} to the swarm", agent_name);
         }
         self.agents.insert(agent_name, agent);
+        Ok(())
     }
 
     /// Remove an agent from the swarm
@@ -364,10 +392,15 @@ impl AgentRearrange {
     /// # Arguments
     ///
     /// * `agents` - A vector of agents to be added
-    pub fn add_agents(&mut self, agents: Vec<Box<dyn Agent>>) {
+    ///
+    /// # Errors
+    ///
+    /// - `DuplicateAgentNames` if an agent's name is already registered
+    pub fn add_agents(&mut self, agents: Vec<Box<dyn Agent>>) -> Result<(), AgentRearrangeError> {
         for agent in agents {
-            self.add_agent(agent);
+            self.add_agent(agent)?;
         }
+        Ok(())
     }
 
     /// Validate the flow pattern for correctness
@@ -385,7 +418,12 @@ impl AgentRearrange {
     ///
     /// - `FlowValidationError` if the flow format is incorrect
     /// - `AgentNotFound` if referenced agents are not registered
+    /// - `DuplicateAgentNames` if two agents were built with the same name
     pub fn validate_flow(&self) -> Result<(), AgentRearrangeError> {
+        if !self.duplicate_agent_names.is_empty() {
+            return Err(AgentRearrangeError::DuplicateAgentNames);
+        }
+
         if self.flow.is_empty() {
             return Err(AgentRearrangeError::FlowValidationError(
                 "Flow cannot be empty".to_string(),
@@ -474,7 +512,8 @@ impl AgentRearrange {
             vec![self.flow.as_str()]
         };
         let mut current_task = task.clone();
-        let mut response_map = HashMap::new();
+        // Every agent response, in execution order
+        let mut responses: Vec<(String, String)> = Vec::new();
 
         for loop_count in 0..self.max_loops {
             if self.verbose {
@@ -490,14 +529,23 @@ impl AgentRearrange {
                         tracing::info!("Running agents in parallel: {:?}", agent_names);
                     }
 
+                    // Parallel agents get the same context as sequential ones
                     let parallel_results = self
-                        .execute_agents_parallel(&agent_names, &current_task)
+                        .execute_agents_parallel(&agent_names, &self.conversation.to_string())
                         .await?;
+
+                    if !parallel_results.is_empty() {
+                        current_task = parallel_results
+                            .iter()
+                            .map(|(agent_name, result)| format!("{}: {}", agent_name, result))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
 
                     for (agent_name, result) in parallel_results {
                         self.conversation
                             .add(Role::Assistant(agent_name.clone()), result.clone());
-                        response_map.insert(agent_name, result);
+                        responses.push((agent_name, result));
                     }
                 } else {
                     // Sequential processing
@@ -527,7 +575,7 @@ impl AgentRearrange {
                     self.conversation
                         .add(Role::Assistant(agent_name.to_string()), result.clone());
 
-                    response_map.insert(agent_name.to_string(), result.clone());
+                    responses.push((agent_name.to_string(), result.clone()));
                     current_task = result;
                 }
             }
@@ -538,7 +586,7 @@ impl AgentRearrange {
         }
 
         // Format output based on output_type
-        let output = self.format_output(&response_map, &current_task);
+        let output = self.format_output(&responses, &current_task);
 
         if self.autosave {
             self.save_metadata().await?;
@@ -547,12 +595,12 @@ impl AgentRearrange {
         Ok(output)
     }
 
-    /// Execute multiple agents in parallel
+    /// Execute multiple agents in parallel, returning results in `agent_names` order
     async fn execute_agents_parallel(
         &self,
         agent_names: &[&str],
         task: &str,
-    ) -> Result<HashMap<String, String>, AgentRearrangeError> {
+    ) -> Result<Vec<(String, String)>, AgentRearrangeError> {
         let mut handles = Vec::new();
 
         for agent_name in agent_names {
@@ -580,30 +628,32 @@ impl AgentRearrange {
         }
 
         // Wait for all parallel tasks to complete
-        let mut results = HashMap::new();
+        let mut results = Vec::with_capacity(handles.len());
         for handle in handles {
             let (agent_name, result) = handle.await?;
 
             let result = result.map_err(AgentRearrangeError::AgentError)?;
-            results.insert(agent_name, result);
+            results.push((agent_name, result));
         }
 
         Ok(results)
     }
 
     /// Format the output based on the configured output type
-    fn format_output(&self, response_map: &HashMap<String, String>, final_result: &str) -> String {
+    ///
+    /// `responses` holds every agent response in execution order.
+    fn format_output(&self, responses: &[(String, String)], final_result: &str) -> String {
         match self.output_type {
             OutputType::All => {
                 let mut output = String::new();
-                for (agent_name, response) in response_map {
+                for (agent_name, response) in responses {
                     output.push_str(&format!("{}: {}\n", agent_name, response));
                 }
                 output
             },
             OutputType::Final => final_result.to_string(),
             OutputType::List => {
-                let responses: Vec<String> = response_map.values().cloned().collect();
+                let responses: Vec<&str> = responses.iter().map(|(_, r)| r.as_str()).collect();
                 if self.return_json {
                     serde_json::to_string(&responses).unwrap_or_else(|_| "[]".to_string())
                 } else {
@@ -611,10 +661,22 @@ impl AgentRearrange {
                 }
             },
             OutputType::Dict => {
+                // Latest response per agent, ordered by each agent's first appearance
+                let mut latest: Vec<(&str, &str)> = Vec::new();
+                for (agent_name, response) in responses {
+                    match latest.iter_mut().find(|(name, _)| name == agent_name) {
+                        Some(entry) => entry.1 = response,
+                        None => latest.push((agent_name, response)),
+                    }
+                }
                 if self.return_json {
-                    serde_json::to_string(response_map).unwrap_or_else(|_| "{}".to_string())
+                    let map: serde_json::Map<String, serde_json::Value> = latest
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v.into()))
+                        .collect();
+                    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
                 } else {
-                    response_map
+                    latest
                         .iter()
                         .map(|(k, v)| format!("{}: {}", k, v))
                         .collect::<Vec<_>>()
@@ -646,12 +708,17 @@ impl AgentRearrange {
         }
 
         let mut results = Vec::with_capacity(tasks.len());
+        // `chunks(0)` panics; treat 0 like 1, as `max_loops` does
+        let batch_size = batch_size.max(1);
 
-        for chunk in tasks.chunks(batch_size) {
+        for (chunk_idx, chunk) in tasks.chunks(batch_size).enumerate() {
             let mut batch_handles = Vec::new();
 
             for (i, task) in chunk.iter().enumerate() {
-                let img_path = img.as_ref().and_then(|imgs| imgs.get(i)).cloned();
+                let img_path = img
+                    .as_ref()
+                    .and_then(|imgs| imgs.get(chunk_idx * batch_size + i))
+                    .cloned();
                 let task_clone = task.clone();
 
                 // Create a clone of self for each task
@@ -682,7 +749,7 @@ impl AgentRearrange {
     ///
     /// * `tasks` - Vector of tasks to process concurrently
     /// * `img` - Optional image paths corresponding to tasks
-    /// * `max_concurrent` - Maximum number of concurrent tasks (None for unlimited)
+    /// * `max_concurrent` - Maximum number of concurrent tasks (None for the default of 8; 0 is treated as 1)
     ///
     /// # Returns
     ///
@@ -704,13 +771,19 @@ impl AgentRearrange {
             async move { rearrange_clone.run_internal(task, img_path, None).await }
         }));
 
-        let results: Result<Vec<_>, _> = if let Some(max_concurrent) = max_concurrent {
-            stream.buffer_unordered(max_concurrent).try_collect().await
-        } else {
-            stream.buffer_unordered(8).try_collect().await // Default to 8 concurrent tasks
-        };
+        // `buffered` keeps results in input order; a limit of 0 would never make progress
+        let max_concurrent = max_concurrent.unwrap_or(8).max(1);
+        stream.buffered(max_concurrent).try_collect().await
+    }
 
-        results
+    /// Run a task on a fresh copy of this swarm and return that run's conversation
+    pub(crate) async fn run_to_conversation(
+        &self,
+        task: impl Into<String>,
+    ) -> Result<AgentConversation, AgentRearrangeError> {
+        let mut rearrange = self.clone_for_task();
+        rearrange.run_internal(task, None, None).await?;
+        Ok(rearrange.conversation)
     }
 
     /// Create a lightweight clone for task execution
@@ -725,6 +798,7 @@ impl AgentRearrange {
             name: self.name.clone(),
             description: self.description.clone(),
             agents: cloned_agents,
+            duplicate_agent_names: self.duplicate_agent_names.clone(),
             flow: self.flow.clone(),
             max_loops: self.max_loops,
             verbose: self.verbose,

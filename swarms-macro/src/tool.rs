@@ -3,6 +3,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
+use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Error, Ident, LitStr, Meta, Result, Token};
@@ -139,8 +140,11 @@ impl Parse for ArgMeta {
     }
 }
 
+/// PascalCase over any non-alphanumeric separator, so tool names like "get-weather"
+/// still yield valid Rust identifiers.
 fn to_pascal_case(s: &str) -> String {
-    s.split('_')
+    let pascal: String = s
+        .split(|c: char| !c.is_alphanumeric())
         .map(|part| {
             let mut chars = part.chars();
             match chars.next() {
@@ -148,35 +152,69 @@ fn to_pascal_case(s: &str) -> String {
                 Some(first) => first.to_uppercase().chain(chars).collect(),
             }
         })
-        .collect()
+        .collect();
+    if pascal.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{pascal}")
+    } else {
+        pascal
+    }
+}
+
+/// Return the first generic type argument of `ty` if its last path segment is `wrapper`
+/// (e.g. `Option<T>` or `std::option::Option<T>` → `T`).
+fn generic_inner<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != wrapper {
+        return None;
+    }
+    match &segment.arguments {
+        syn::PathArguments::AngleBracketed(args) => match args.args.first() {
+            Some(syn::GenericArgument::Type(inner)) => Some(inner),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_option(ty: &Type) -> bool {
+    generic_inner(ty, "Option").is_some()
 }
 
 fn get_json_type(ty: &Type) -> TokenStream2 {
+    // Option<T> is described by T; optionality is expressed through `required`.
+    if let Some(inner) = generic_inner(ty, "Option") {
+        return get_json_type(inner);
+    }
     match ty {
         Type::Path(type_path) => {
-            let segment = &type_path.path.segments[0];
+            let segment = type_path.path.segments.last().expect("empty type path");
             let type_name = segment.ident.to_string();
 
             // Handle Vec types
             if type_name == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
-                        let inner_json_type = get_json_type(inner_type);
-                        return quote! {
-                            "type": "array",
-                            "items": { #inner_json_type }
-                        };
-                    }
+                if let Some(inner_type) = generic_inner(ty, "Vec") {
+                    let inner_json_type = get_json_type(inner_type);
+                    return quote! {
+                        "type": "array",
+                        "items": { #inner_json_type }
+                    };
                 }
                 return quote! { "type": "array" };
             }
 
             // Handle primitive types
             match type_name.as_str() {
-                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" => {
+                "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+                | "u128" | "usize" => {
+                    quote! { "type": "integer" }
+                }
+                "f32" | "f64" => {
                     quote! { "type": "number" }
                 }
-                "String" | "str" => {
+                "String" | "str" | "char" => {
                     quote! { "type": "string" }
                 }
                 "bool" => {
@@ -196,17 +234,12 @@ fn get_json_type(ty: &Type) -> TokenStream2 {
 fn is_custom_struct(ty: &Type) -> bool {
     match ty {
         Type::Path(type_path) => {
-            let segment = &type_path.path.segments[0];
+            let segment = type_path.path.segments.last().expect("empty type path");
             let type_name = segment.ident.to_string();
 
             // Check if it's a Vec<T>
             if type_name == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
-                        return is_custom_struct(inner_type);
-                    }
-                }
-                return false;
+                return generic_inner(ty, "Vec").is_some_and(is_custom_struct);
             }
 
             // List of known primitive and standard library types
@@ -215,15 +248,18 @@ fn is_custom_struct(ty: &Type) -> bool {
                 "i8" | "i16"
                     | "i32"
                     | "i64"
+                    | "i128"
                     | "isize"
                     | "u8"
                     | "u16"
                     | "u32"
                     | "u64"
+                    | "u128"
                     | "usize"
                     | "f32"
                     | "f64"
                     | "bool"
+                    | "char"
                     | "String"
                     | "str"
                     | "Vec"
@@ -242,62 +278,60 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let tool_name = match tool_attr.name {
         Some(name) => name,
-        None => input_fn.sig.ident.to_string(),
+        None => input_fn.sig.ident.unraw().to_string(),
     };
 
     let struct_name = quote::format_ident!("{}Tool", to_pascal_case(&tool_name));
     let static_name = quote::format_ident!("{}", to_pascal_case(&tool_name));
 
-    // Extract return type: Result<T, E>
+    // Extract return type: Result<T, E>, matched on the last path segment so
+    // `std::result::Result<T, E>` works. The error type must be spelled out: aliases such
+    // as `io::Result<T>` hide it from the macro.
+    const RETURN_TYPE_ERROR: &str = "Function must return `Result<T, E>` with an explicit error type (type aliases such as `io::Result<T>` are not supported)";
     let (return_type, error_type) = if let ReturnType::Type(_, ty) = &input_fn.sig.output {
-        if let Type::Path(type_path) = ty.as_ref() {
-            if type_path.path.segments[0].ident == "Result" {
-                match &type_path.path.segments[0].arguments {
-                    syn::PathArguments::AngleBracketed(args) => {
-                        let params: Vec<_> = args.args.iter().collect();
-
-                        if params.is_empty() || params.len() > 2 {
-                            panic!("Result must have 1 or 2 type parameters");
-                        }
-
-                        let t = match params[0] {
-                            syn::GenericArgument::Type(ty) => ty,
-                            _ => panic!("Result must have a type parameter"),
-                        };
-
-                        let e = if params.len() == 2 {
-                            match params[1] {
-                                syn::GenericArgument::Type(ty) => ty.clone(),
-                                _ => panic!("Result must have a type parameter"),
-                            }
-                        } else {
-                            panic!("Result must have a type parameter");
-                        };
-
-                        (t, e)
-                    }
-                    _ => panic!("Result must have type parameters"),
-                }
-            } else {
-                panic!("Function must return a Result<T, E> or Result<T>")
-            }
-        } else {
-            panic!("Expected angle bracketed arguments in Result")
+        let Type::Path(type_path) = ty.as_ref() else {
+            panic!("{RETURN_TYPE_ERROR}");
+        };
+        let segment = type_path
+            .path
+            .segments
+            .last()
+            .expect("empty return type path");
+        if segment.ident != "Result" {
+            panic!("{RETURN_TYPE_ERROR}");
+        }
+        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+            panic!("{RETURN_TYPE_ERROR}");
+        };
+        match args.args.iter().collect::<Vec<_>>().as_slice() {
+            [syn::GenericArgument::Type(t), syn::GenericArgument::Type(e)] => (t, e.clone()),
+            _ => panic!("{RETURN_TYPE_ERROR}"),
         }
     } else {
         panic!("Function must return a Result")
     };
 
-    let args = input_fn.sig.inputs.iter().filter_map(|arg| {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
-            Some((pat, ty))
-        } else {
-            None
-        }
-    });
+    let args: Vec<(&Ident, &Type)> = input_fn
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(PatType { pat, ty, .. }) => match pat.as_ref() {
+                // Only the identifier is reused, so `mut x` becomes a plain `x` field.
+                syn::Pat::Ident(pat_ident) => Some((&pat_ident.ident, ty.as_ref())),
+                _ => panic!("Only simple identifiers are supported in tool arguments"),
+            },
+            FnArg::Receiver(_) => None,
+        })
+        .collect();
 
-    let arg_names: Vec<_> = args.clone().map(|(pat, _)| pat).collect();
-    let arg_types: Vec<_> = args.clone().map(|(_, ty)| ty).collect();
+    let arg_names: Vec<_> = args.iter().map(|(ident, _)| *ident).collect();
+    let arg_types: Vec<_> = args.iter().map(|(_, ty)| *ty).collect();
+    // JSON property names: serde serializes the field `r#type` as `type`.
+    let arg_json_names: Vec<_> = arg_names
+        .iter()
+        .map(|ident| ident.unraw().to_string())
+        .collect();
     let json_types: Vec<_> = arg_types.iter().map(|ty| get_json_type(ty)).collect();
 
     let is_struct_args = arg_types.iter().any(|ty| is_custom_struct(ty));
@@ -311,35 +345,20 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     for arg in &tool_attr.args {
         if let Some(false) = arg.required {
             // Find the corresponding argument type
-            if let Some((_, ty)) = args.clone().find(|(pat, _)| {
-                if let syn::Pat::Ident(pat_ident) = &***pat {
-                    pat_ident.ident == arg.name
-                } else {
-                    false
-                }
-            }) {
-                if let Type::Path(type_path) = &**ty {
-                    let segment = &type_path.path.segments[0];
-                    if segment.ident != "Option" {
-                        panic!(
-                            "Argument '{}' is marked as optional (required = false) but is not an Option type",
-                            arg.name
-                        );
-                    }
-                }
+            if let Some((_, ty)) = args.iter().find(|(ident, _)| **ident == arg.name)
+                && !is_option(ty)
+            {
+                panic!(
+                    "Argument '{}' is marked as optional (required = false) but is not an Option type",
+                    arg.name
+                );
             }
         }
     }
 
     // arg attributes must be one of the function arguments
     for arg in &tool_attr.args {
-        if !arg_names.iter().any(|pat| {
-            if let syn::Pat::Ident(pat_ident) = &***pat {
-                pat_ident.ident == arg.name
-            } else {
-                false
-            }
-        }) {
+        if !arg_names.iter().any(|ident| **ident == arg.name) {
             panic!("Argument {} not found in function arguments", arg.name);
         }
     }
@@ -362,36 +381,39 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let arg_descriptions: Vec<_> = arg_names
         .iter()
-        .map(|pat| {
-            let ident = match &***pat {
-                syn::Pat::Ident(pat_ident) => &pat_ident.ident,
-                _ => panic!("Only simple identifiers are supported in tool arguments"),
-            };
-            let arg_meta = tool_attr.args.iter().find(|arg| *ident == arg.name);
+        .map(|ident| {
+            let arg_meta = tool_attr.args.iter().find(|arg| **ident == arg.name);
             arg_meta
                 .and_then(|arg| arg.description.clone())
-                .unwrap_or_else(|| format!("Parameter {}", ident))
+                .unwrap_or_else(|| format!("Parameter {}", ident.unraw()))
         })
         .collect();
 
-    // Collect required arguments
-    let required_args: Vec<_> = arg_names
+    // Collect required arguments: `Option` args are optional unless marked `required = true`.
+    let required_args: Vec<_> = args
         .iter()
-        .filter_map(|pat| {
-            let ident = match &***pat {
-                syn::Pat::Ident(pat_ident) => &pat_ident.ident,
-                _ => panic!("Only simple identifiers are supported in tool arguments"),
-            };
-            let arg_meta = tool_attr.args.iter().find(|arg| *ident == arg.name);
-            if arg_meta.and_then(|arg| arg.required).unwrap_or(true) {
-                Some(quote! { stringify!(#ident) })
-            } else {
-                None
-            }
+        .filter(|(ident, ty)| {
+            let arg_meta = tool_attr.args.iter().find(|arg| **ident == arg.name);
+            arg_meta
+                .and_then(|arg| arg.required)
+                .unwrap_or_else(|| !is_option(ty))
         })
+        .map(|(ident, _)| ident.unraw().to_string())
         .collect();
 
-    let args_struct_name = quote::format_ident!("{}Args", to_pascal_case(&tool_name));
+    // `{Name}Args` would clash with an argument type of the same name
+    // (e.g. `fn search(args: SearchArgs)`), so fall back to `{Name}ToolArgs` then.
+    let args_struct_name = {
+        let name = quote::format_ident!("{}Args", to_pascal_case(&tool_name));
+        let clashes = arg_types.iter().any(|ty| {
+            matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == name))
+        });
+        if clashes {
+            quote::format_ident!("{}ToolArgs", to_pascal_case(&tool_name))
+        } else {
+            name
+        }
+    };
 
     let call_impl = if input_fn.sig.asyncness.is_some() {
         quote! {
@@ -430,7 +452,7 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "type": "object",
                         "properties": {
                             #(
-                                stringify!(#arg_names): {
+                                #arg_json_names: {
                                     #json_types,
                                     "description": #arg_descriptions
                                 }

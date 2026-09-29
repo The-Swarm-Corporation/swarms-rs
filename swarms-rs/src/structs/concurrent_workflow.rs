@@ -106,10 +106,17 @@ impl ConcurrentWorkflow {
         if task.is_empty() || self.agents.is_empty() {
             return Err(ConcurrentWorkflowError::EmptyTasksOrAgents);
         }
+        // Only one run per task at a time; the slot is released however this run ends
         if !self.tasks.insert(task.clone()) {
             return Err(ConcurrentWorkflowError::TaskAlreadyExists);
         };
+        let _running = RunningTask {
+            tasks: &self.tasks,
+            task: &task,
+        };
 
+        // Start from a fresh conversation so a repeated task doesn't carry the last run's history
+        self.conversation.0.remove(&task);
         self.conversation
             .add(&task, &self.name, Role::User("User".to_owned()), &task);
 
@@ -120,19 +127,15 @@ impl ConcurrentWorkflow {
                 let tx = tx.clone();
                 let task = task.clone();
                 async move {
-                    let output =
-                        match run_agent_with_output_schema(agent.as_ref(), task.clone()).await {
-                            Ok(output) => output,
-                            Err(e) => {
-                                tracing::error!(
-                                    "| concurrent workflow | Agent: {} | Task: {} | Error: {}",
-                                    agent.name(),
-                                    task,
-                                    e
-                                );
-                                return;
-                            },
-                        };
+                    let output = run_agent_with_output_schema(agent.as_ref(), task.clone()).await;
+                    if let Err(e) = &output {
+                        tracing::error!(
+                            "| concurrent workflow | Agent: {} | Task: {} | Error: {}",
+                            agent.name(),
+                            task,
+                            e
+                        );
+                    }
                     tx.send(output).await.unwrap();
                 }
             })
@@ -140,7 +143,15 @@ impl ConcurrentWorkflow {
         drop(tx);
 
         let mut agents_output_schema = Vec::with_capacity(self.agents.len());
-        while let Some(output_schema) = rx.recv().await {
+        let mut first_error = None;
+        while let Some(output) = rx.recv().await {
+            let output_schema = match output {
+                Ok(output_schema) => output_schema,
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                    continue;
+                },
+            };
             self.conversation.add(
                 &task,
                 &self.name,
@@ -148,6 +159,13 @@ impl ConcurrentWorkflow {
                 &output_schema.output,
             );
             agents_output_schema.push(output_schema);
+        }
+
+        // Partial failures are logged above; if no agent succeeded, the run failed
+        if agents_output_schema.is_empty()
+            && let Some(e) = first_error
+        {
+            return Err(e.into());
         }
 
         let metadata = MetadataSchema {
@@ -158,17 +176,21 @@ impl ConcurrentWorkflow {
             timestamp: Local::now(),
         };
 
-        self.metadata_map.add(&task, metadata.clone());
+        // Persist metadata only when an output dir is configured, instead of writing
+        // into the current directory
+        if !self.metadata_output_dir.is_empty() {
+            let mut hasher = XxHash3_64::default();
+            task.hash(&mut hasher);
+            let task_hash = hasher.finish();
+            let metadata_path_dir = Path::new(&self.metadata_output_dir);
+            let metadata_output_dir = metadata_path_dir
+                .join(format!("{:x}", task_hash & 0xFFFFFFFF)) // Lower 32 bits of the hash
+                .with_extension("json");
+            let metadata_data = serde_json::to_string_pretty(&metadata)?;
+            persistence::save_to_file(metadata_data, &metadata_output_dir).await?;
+        }
 
-        let mut hasher = XxHash3_64::default();
-        task.hash(&mut hasher);
-        let task_hash = hasher.finish();
-        let metadata_path_dir = Path::new(&self.metadata_output_dir);
-        let metadata_output_dir = metadata_path_dir
-            .join(format!("{:x}", task_hash & 0xFFFFFFFF)) // Lower 32 bits of the hash
-            .with_extension("json");
-        let metadata_data = serde_json::to_string_pretty(&metadata)?;
-        persistence::save_to_file(metadata_data, &metadata_output_dir).await?;
+        self.metadata_map.add(&task, metadata);
 
         // Safety: we know that the task exists
         Ok(self.conversation.0.get(&task).unwrap().clone())
@@ -209,6 +231,18 @@ impl ConcurrentWorkflow {
         }
 
         Ok(results)
+    }
+}
+
+/// Removes a task from the set of running tasks when dropped.
+struct RunningTask<'a> {
+    tasks: &'a DashSet<String>,
+    task: &'a str,
+}
+
+impl Drop for RunningTask<'_> {
+    fn drop(&mut self) {
+        self.tasks.remove(self.task);
     }
 }
 

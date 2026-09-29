@@ -1,6 +1,6 @@
 use futures::future::BoxFuture;
 use swarms_rs::structs::agent::{Agent, AgentError};
-use swarms_rs::structs::rearrange::{AgentRearrange, OutputType, rearrange};
+use swarms_rs::structs::rearrange::{AgentRearrange, AgentRearrangeError, OutputType, rearrange};
 use uuid::Uuid;
 
 // Mock agent for testing
@@ -64,6 +64,187 @@ impl Agent for MockAgent {
     fn clone_box(&self) -> Box<dyn Agent> {
         Box::new(self.clone())
     }
+}
+
+/// Agent whose reply depends on its input: "slow done" (after a delay) for tasks
+/// containing "SLOW", otherwise whether the input contained "ORIGINAL".
+#[derive(Clone)]
+struct ProbeAgent {
+    name: String,
+}
+
+impl ProbeAgent {
+    fn boxed(name: &str) -> Box<dyn Agent> {
+        Box::new(Self {
+            name: name.to_string(),
+        })
+    }
+}
+
+impl Agent for ProbeAgent {
+    fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>> {
+        Box::pin(async move {
+            if task.contains("SLOW") {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                return Ok("slow done".to_string());
+            }
+            if task.contains("ORIGINAL") {
+                Ok("saw-original".to_string())
+            } else {
+                Ok("missing-original".to_string())
+            }
+        })
+    }
+
+    fn run_multiple_tasks(
+        &mut self,
+        _tasks: Vec<String>,
+    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    fn plan(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn save_task_state(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn is_response_complete(&self, _response: String) -> bool {
+        true
+    }
+
+    fn id(&self) -> String {
+        self.name.clone()
+    }
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn description(&self) -> String {
+        format!("Probe agent: {}", self.name)
+    }
+
+    fn clone_box(&self) -> Box<dyn Agent> {
+        Box::new(self.clone())
+    }
+}
+
+#[tokio::test]
+async fn test_concurrent_run_preserves_task_order() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(ProbeAgent::boxed("probe"))
+        .flow("probe")
+        .output_type(OutputType::Final)
+        .build();
+
+    // The first task finishes last; results must still follow input order
+    let tasks = vec!["SLOW task".to_string(), "ORIGINAL task".to_string()];
+    let results = rearrange
+        .concurrent_run(tasks, None, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(results, vec!["slow done", "saw-original"]);
+}
+
+#[tokio::test]
+async fn test_concurrent_run_zero_concurrency_does_not_hang() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "response1")))
+        .flow("agent1")
+        .build();
+
+    let tasks = vec!["task1".to_string(), "task2".to_string()];
+    let results = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        rearrange.concurrent_run(tasks, None, Some(0)),
+    )
+    .await
+    .expect("concurrent_run hung with max_concurrent = 0")
+    .unwrap();
+    assert_eq!(results.len(), 2);
+}
+
+#[tokio::test]
+async fn test_batch_run_zero_batch_size() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "response1")))
+        .flow("agent1")
+        .build();
+
+    let tasks = vec!["task1".to_string(), "task2".to_string()];
+    let results = rearrange.batch_run(tasks, 0, None).await.unwrap();
+    assert_eq!(results.len(), 2);
+}
+
+#[tokio::test]
+async fn test_parallel_group_sets_final_output_and_sees_task() {
+    // Parallel-only flow: the final output is the group's responses, not the raw task
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(ProbeAgent::boxed("probe1"))
+        .add_agent(ProbeAgent::boxed("probe2"))
+        .flow("probe1, probe2")
+        .output_type(OutputType::Final)
+        .build();
+    let result = rearrange.run("ORIGINAL task").await.unwrap();
+    assert_eq!(result, "probe1: saw-original\nprobe2: saw-original");
+
+    // After a sequential step, parallel agents still see the original task
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "response1")))
+        .add_agent(ProbeAgent::boxed("probe2"))
+        .add_agent(ProbeAgent::boxed("probe3"))
+        .flow("agent1 -> probe2, probe3")
+        .output_type(OutputType::Final)
+        .build();
+    let result = rearrange.run("ORIGINAL task").await.unwrap();
+    assert_eq!(result, "probe2: saw-original\nprobe3: saw-original");
+}
+
+#[tokio::test]
+async fn test_duplicate_agent_names_rejected() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "first")))
+        .add_agent(Box::new(MockAgent::new("agent1", "second")))
+        .flow("agent1")
+        .build();
+    assert!(matches!(
+        rearrange.validate_flow(),
+        Err(AgentRearrangeError::DuplicateAgentNames)
+    ));
+    assert!(matches!(
+        rearrange.run("task").await,
+        Err(AgentRearrangeError::DuplicateAgentNames)
+    ));
+
+    let mut rearrange = AgentRearrange::builder().build();
+    rearrange
+        .add_agent(Box::new(MockAgent::new("agent1", "first")))
+        .unwrap();
+    assert!(matches!(
+        rearrange.add_agent(Box::new(MockAgent::new("agent1", "second"))),
+        Err(AgentRearrangeError::DuplicateAgentNames)
+    ));
+    assert_eq!(rearrange.agent_count(), 1);
+}
+
+#[tokio::test]
+async fn test_list_output_keeps_every_response_in_order() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "response1")))
+        .add_agent(Box::new(MockAgent::new("agent2", "response2")))
+        .flow("agent1 -> agent2 -> agent1")
+        .output_type(OutputType::List)
+        .build();
+
+    let result = rearrange.run("task").await.unwrap();
+    assert_eq!(result, "response1\nresponse2\nresponse1");
 }
 
 #[tokio::test]
@@ -238,8 +419,8 @@ async fn test_agent_management() {
     let agent1 = Box::new(MockAgent::new("agent1", "response1")) as Box<dyn Agent>;
     let agent2 = Box::new(MockAgent::new("agent2", "response2")) as Box<dyn Agent>;
 
-    rearrange.add_agent(agent1);
-    rearrange.add_agent(agent2);
+    rearrange.add_agent(agent1).unwrap();
+    rearrange.add_agent(agent2).unwrap();
 
     assert_eq!(rearrange.agent_count(), 2);
     assert!(rearrange.agent_names().contains(&&"agent1".to_string()));

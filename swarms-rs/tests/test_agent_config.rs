@@ -18,7 +18,7 @@ fn test_agent_config_builder_creation() {
     assert_eq!(config.name, "TestAgent");
     assert_eq!(config.user_name, "TestUser");
     assert_eq!(config.description, Some("A test agent".to_string()));
-    assert_eq!(config.temperature, 0.7);
+    assert_eq!(config.temperature, Some(0.7));
     assert_eq!(config.max_loops, 5);
     assert_eq!(config.max_tokens, 1000);
     assert!(!config.id.is_empty());
@@ -34,7 +34,7 @@ fn test_agent_config_builder_defaults() {
     assert_eq!(config.name, "DefaultAgent");
     assert_eq!(config.user_name, "DefaultUser");
     assert_eq!(config.description, None);
-    assert_eq!(config.temperature, 0.7); // Default value
+    assert_eq!(config.temperature, None); // Default: left to the provider
     assert_eq!(config.max_loops, 1); // Default value
     assert!(!config.id.is_empty());
 }
@@ -166,7 +166,7 @@ fn test_agent_config_builder_chaining() {
         config.description,
         Some("A chained configuration test".to_string())
     );
-    assert_eq!(config.temperature, 0.8);
+    assert_eq!(config.temperature, Some(0.8));
     assert_eq!(config.max_loops, 3);
     assert_eq!(config.max_tokens, 500);
     assert!(config.plan_enabled);
@@ -273,7 +273,7 @@ fn test_agent_config_default_values() {
     assert_eq!(config.name, "Agent");
     assert_eq!(config.user_name, "User");
     assert_eq!(config.description, None);
-    assert_eq!(config.temperature, 0.7);
+    assert_eq!(config.temperature, None);
     assert_eq!(config.max_loops, 1);
     assert_eq!(config.max_tokens, 8192);
     assert!(!config.plan_enabled);
@@ -319,14 +319,14 @@ fn test_agent_config_temperature_bounds() {
         .agent_name("LowTempAgent")
         .temperature(0.0)
         .build();
-    assert_eq!(config_low.temperature, 0.0);
+    assert_eq!(config_low.temperature, Some(0.0));
 
     // Test high temperature
     let config_high = AgentConfig::builder()
         .agent_name("HighTempAgent")
         .temperature(2.0)
         .build();
-    assert_eq!(config_high.temperature, 2.0);
+    assert_eq!(config_high.temperature, Some(2.0));
 }
 
 #[test]

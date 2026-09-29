@@ -26,21 +26,31 @@ use swarms_rs::llm::request::{CompletionRequest, ToolDefinition};
 mod unit_tests {
     use super::*;
 
+    /// Tests run in parallel threads, so the ones that set or remove
+    /// `ANTHROPIC_API_KEY` must not interleave.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        // A should_panic test poisons the lock; the guarded state is still fine.
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_anthropic_new() {
         let client = Anthropic::new("test-api-key");
-        assert_eq!(client.model(), "claude-3-5-sonnet-20241022");
+        assert_eq!(client.model(), "claude-opus-5-5");
     }
 
     #[test]
     fn test_anthropic_from_url() {
         let client = Anthropic::from_url("https://custom.anthropic.com", "test-key");
-        assert_eq!(client.model(), "claude-3-5-sonnet-20241022");
+        assert_eq!(client.model(), "claude-opus-5-5");
     }
 
     #[test]
     #[should_panic(expected = "ANTHROPIC_API_KEY environment variable is not set")]
     fn test_anthropic_from_env_missing_key() {
+        let _guard = env_lock();
         // Ensure API key is not set
         unsafe {
             env::remove_var("ANTHROPIC_API_KEY");
@@ -52,6 +62,7 @@ mod unit_tests {
 
     #[test]
     fn test_anthropic_from_env_with_key() {
+        let _guard = env_lock();
         // Set API key in a scoped way to avoid interference with other tests
         {
             unsafe {
@@ -59,7 +70,7 @@ mod unit_tests {
             }
 
             let client = Anthropic::from_env();
-            assert_eq!(client.model(), "claude-3-5-sonnet-20241022");
+            assert_eq!(client.model(), "claude-opus-5-5");
         }
 
         // Clean up
@@ -70,14 +81,15 @@ mod unit_tests {
 
     #[test]
     fn test_anthropic_from_env_with_model() {
+        let _guard = env_lock();
         // Set API key in a scoped way to avoid interference with other tests
         {
             unsafe {
                 env::set_var("ANTHROPIC_API_KEY", "test-key-from-env");
             }
 
-            let client = Anthropic::from_env_with_model("claude-3-haiku-20240307");
-            assert_eq!(client.model(), "claude-3-haiku-20240307");
+            let client = Anthropic::from_env_with_model("claude-haiku-4-5");
+            assert_eq!(client.model(), "claude-haiku-4-5");
         }
 
         // Clean up
@@ -88,8 +100,8 @@ mod unit_tests {
 
     #[test]
     fn test_set_model() {
-        let client = Anthropic::new("test-key").set_model("claude-3-opus-20240229");
-        assert_eq!(client.model(), "claude-3-opus-20240229");
+        let client = Anthropic::new("test-key").set_model("claude-opus-5-5");
+        assert_eq!(client.model(), "claude-opus-5-5");
     }
 
     #[test]
@@ -173,8 +185,8 @@ mod integration_tests {
             system_prompt: Some("You are a helpful assistant.".to_string()),
             chat_history: vec![],
             tools: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(50),
+            temperature: None,
+            max_tokens: Some(1024),
         };
 
         let result = client.completion(request).await;
@@ -205,7 +217,7 @@ mod integration_tests {
             return;
         }
 
-        let models = vec!["claude-3-5-haiku-20241022", "claude-3-haiku-20240307"];
+        let models = vec!["claude-haiku-4-5"];
 
         for model_name in models {
             let client = Anthropic::from_env().set_model(model_name);
@@ -264,8 +276,8 @@ mod integration_tests {
             system_prompt: None,
             chat_history,
             tools: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(50),
+            temperature: None,
+            max_tokens: Some(1024),
         };
 
         let result = client.completion(request).await;
@@ -350,8 +362,8 @@ mod integration_tests {
             system_prompt: Some("You are a helpful assistant with access to tools. Use tools when appropriate to answer questions.".to_string()),
             chat_history: vec![],
             tools,
-            temperature: Some(0.1),
-            max_tokens: Some(200),
+            temperature: None,
+            max_tokens: Some(1024),
         };
 
         let result = client.completion(request).await;

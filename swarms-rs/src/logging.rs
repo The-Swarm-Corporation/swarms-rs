@@ -52,7 +52,9 @@ pub fn init_logger() {
                 record.args()
             )
         })
-        .init();
+        // try_init: calling this twice, or after another logger is installed, must not panic.
+        .try_init()
+        .ok();
 
     log::info!("🚀 Swarms-RS logging initialized with level: {}", log_level);
 }

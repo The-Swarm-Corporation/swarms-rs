@@ -174,7 +174,6 @@ fn test_agent_conversation_to_json() {
 }
 
 #[tokio::test]
-#[ignore] // Ignore this test as it has parsing issues in the current implementation
 async fn test_agent_conversation_export_import() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("conversation.txt");
@@ -183,25 +182,29 @@ async fn test_agent_conversation_export_import() {
     conversation.add(Role::User("User".to_string()), "Hello".to_string());
     conversation.add(
         Role::Assistant("Assistant".to_string()),
-        "Hi there".to_string(),
+        "Hi there\nOn two lines".to_string(),
     );
 
-    // Export conversation
-    let export_result = conversation.export_to_file(&file_path).await;
-    assert!(export_result.is_ok());
+    conversation.export_to_file(&file_path).await.unwrap();
 
-    // Import conversation (note: this may fail due to parsing issues in the current implementation)
     let mut new_conversation = AgentConversation::new("imported_agent".to_string());
-    let import_result = new_conversation.import_from_file(&file_path).await;
+    new_conversation.import_from_file(&file_path).await.unwrap();
 
-    // For now, we just test that export works, import might have parsing issues
-    if import_result.is_ok() {
-        // Check that messages were imported correctly
-        assert!(new_conversation.history.len() > 0);
-    } else {
-        // This is expected due to current parsing limitations
-        assert!(import_result.is_err());
-    }
+    // Round-trips exactly: same roles, same (multi-line) content.
+    assert_eq!(new_conversation.history.len(), 2);
+    assert_eq!(new_conversation.to_string(), conversation.to_string());
+    assert_eq!(
+        new_conversation.history[1].role,
+        Role::Assistant("Assistant".to_string())
+    );
+}
+
+#[test]
+fn test_agent_conversation_max_messages_zero_does_not_panic() {
+    let mut conversation = AgentConversation::with_max_messages("a".to_string(), Some(0));
+    conversation.add(Role::User("u".to_string()), "one".to_string());
+    conversation.add(Role::User("u".to_string()), "two".to_string());
+    assert!(conversation.history.len() <= 1);
 }
 
 #[test]
