@@ -11,7 +11,7 @@ pub async fn trades(
     client: &Client,
     base_url: &str,
     mut params: TradesRequest,
-) -> Result<TradesResponse> {
+) -> Result<Vec<TradesResponse>> {
     params.validate()?;
     if params.limit.is_none() {
         params.limit = Some(500);

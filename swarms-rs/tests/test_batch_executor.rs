@@ -313,6 +313,24 @@ async fn test_batch_executor_with_failing_agent() {
 }
 
 #[tokio::test]
+async fn test_batch_executor_all_agents_failing_is_an_error() {
+    let agents: Vec<Box<dyn Agent>> = vec![
+        Box::new(MockAgent::new_failing("Agent1")),
+        Box::new(MockAgent::new_failing("Agent2")),
+    ];
+    let executor = AgentBatchExecutor::new(agents, BatchConfig::default());
+
+    let result = executor
+        .execute_batch(vec!["Task1".to_string(), "Task2".to_string()])
+        .await;
+    assert!(
+        matches!(result, Err(BatchExecutionError::AgentError(_))),
+        "{:?}",
+        result.map(|r| r.len())
+    );
+}
+
+#[tokio::test]
 async fn test_batch_executor_with_worker_threads() {
     let agents: Vec<Box<dyn Agent>> = vec![Box::new(MockAgent::new("Agent1", "Response1"))];
 

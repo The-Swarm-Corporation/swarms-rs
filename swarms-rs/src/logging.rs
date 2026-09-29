@@ -63,7 +63,7 @@ pub fn init_logger() {
 #[macro_export]
 macro_rules! log_agent {
     ($level:ident, $agent_name:expr, $agent_id:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] {}",
             $agent_name,
             $agent_id,
@@ -76,7 +76,7 @@ macro_rules! log_agent {
 #[macro_export]
 macro_rules! log_task {
     ($level:ident, $agent_name:expr, $agent_id:expr, $task:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] 📋 Task: {} - {}",
             $agent_name,
             $agent_id,
@@ -90,7 +90,7 @@ macro_rules! log_task {
 #[macro_export]
 macro_rules! log_tool {
     ($level:ident, $agent_name:expr, $agent_id:expr, $tool_name:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] 🔧 Tool: {} - {}",
             $agent_name,
             $agent_id,
@@ -104,7 +104,7 @@ macro_rules! log_tool {
 #[macro_export]
 macro_rules! log_workflow {
     ($level:ident, $agent_name:expr, $agent_id:expr, $workflow_name:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] 🔄 Workflow: {} - {}",
             $agent_name,
             $agent_id,
@@ -118,7 +118,7 @@ macro_rules! log_workflow {
 #[macro_export]
 macro_rules! log_memory {
     ($level:ident, $agent_name:expr, $agent_id:expr, $operation:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] 🧠 Memory: {} - {}",
             $agent_name,
             $agent_id,
@@ -132,7 +132,7 @@ macro_rules! log_memory {
 #[macro_export]
 macro_rules! log_llm {
     ($level:ident, $agent_name:expr, $agent_id:expr, $model:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[{}:{}] 🤖 LLM: {} - {}",
             $agent_name,
             $agent_id,
@@ -146,7 +146,7 @@ macro_rules! log_llm {
 #[macro_export]
 macro_rules! log_swarm {
     ($level:ident, $swarm_name:expr, $($arg:tt)*) => {
-        log::$level!(
+        $crate::log::$level!(
             "[🐝 Swarm: {}] {}",
             $swarm_name,
             format!($($arg)*)
@@ -158,7 +158,7 @@ macro_rules! log_swarm {
 #[macro_export]
 macro_rules! log_perf {
     ($level:ident, $component:expr, $metric:expr, $value:expr, $unit:expr) => {
-        log::$level!(
+        $crate::log::$level!(
             "📊 Performance: {} - {}: {} {}",
             $component,
             $metric,
@@ -172,7 +172,7 @@ macro_rules! log_perf {
 #[macro_export]
 macro_rules! log_error_ctx {
     ($agent_name:expr, $agent_id:expr, $error:expr, $context:expr) => {
-        log::error!(
+        $crate::log::error!(
             "[{}:{}] ❌ Error in {}: {}",
             $agent_name,
             $agent_id,

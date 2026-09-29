@@ -38,7 +38,9 @@ fn test_agent_conversation_add_message() {
 
     // Check that timestamps are added
     let first_message = &conversation.history[0];
-    let Content::Text(ref text) = first_message.content;
+    let Content::Text(ref text) = first_message.content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Timestamp(millis):"));
     assert!(text.contains("Hello"));
 }
@@ -56,10 +58,14 @@ fn test_agent_conversation_max_messages_limit() {
     assert_eq!(conversation.history.len(), 2);
 
     // First message should be removed, second and third should remain
-    let Content::Text(ref text) = conversation.history[0].content;
+    let Content::Text(ref text) = conversation.history[0].content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Message 2"));
 
-    let Content::Text(ref text) = conversation.history[1].content;
+    let Content::Text(ref text) = conversation.history[1].content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Message 3"));
 }
 
@@ -76,10 +82,14 @@ fn test_agent_conversation_delete_message() {
     assert_eq!(conversation.history.len(), 2);
 
     // Check that correct messages remain
-    let Content::Text(ref text) = conversation.history[0].content;
+    let Content::Text(ref text) = conversation.history[0].content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Message 1"));
 
-    let Content::Text(ref text) = conversation.history[1].content;
+    let Content::Text(ref text) = conversation.history[1].content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Message 3"));
 }
 
@@ -104,7 +114,9 @@ fn test_agent_conversation_update_message() {
         conversation.history[0].role,
         Role::Assistant("assistant1".to_string())
     );
-    let Content::Text(ref text) = conversation.history[0].content;
+    let Content::Text(ref text) = conversation.history[0].content else {
+        panic!("expected text content")
+    };
     assert_eq!(text, "Updated message");
 }
 
@@ -116,7 +128,9 @@ fn test_agent_conversation_query_message() {
 
     let message = conversation.query(0);
     assert_eq!(message.role, Role::User("user1".to_string()));
-    let Content::Text(ref text) = message.content;
+    let Content::Text(ref text) = message.content else {
+        panic!("expected text content")
+    };
     assert!(text.contains("Test message"));
 }
 
@@ -247,7 +261,9 @@ fn test_message_creation() {
     };
 
     assert_eq!(message.role, Role::User("test_user".to_string()));
-    let Content::Text(text) = message.content;
+    let Content::Text(text) = message.content else {
+        panic!("expected text content")
+    };
     assert_eq!(text, "Test content");
 }
 
@@ -463,4 +479,31 @@ fn test_content_debug() {
 
     assert!(debug_output.contains("Text"));
     assert!(debug_output.contains("debug test"));
+}
+
+#[tokio::test]
+async fn test_json_round_trip_keeps_header_like_lines() {
+    // Agent outputs are whole transcripts, so message bodies often contain lines that
+    // look like `Name(User): ...` headers; the text format can't tell them apart.
+    let mut conversation = AgentConversation::new("agent".to_string());
+    conversation.add(
+        Role::Assistant("Writer".to_string()),
+        "Summary of the run:\nBob(User): what is 2+2?\nCalc(Assistant): 4".to_string(),
+    );
+
+    let mut restored = AgentConversation::new("agent".to_string());
+    restored
+        .load_json(&conversation.to_json().unwrap())
+        .unwrap();
+    assert_eq!(restored.history.len(), 1);
+    assert_eq!(restored.to_string(), conversation.to_string());
+
+    // import_from_file accepts the same JSON.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("conversation.json");
+    std::fs::write(&path, conversation.to_json().unwrap()).unwrap();
+    let mut imported = AgentConversation::new("agent".to_string());
+    imported.import_from_file(&path).await.unwrap();
+    assert_eq!(imported.history.len(), 1);
+    assert_eq!(imported.to_string(), conversation.to_string());
 }

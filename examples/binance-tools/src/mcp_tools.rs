@@ -1,7 +1,7 @@
 use reqwest::Client;
 use rmcp::{
     Error as MCPError, ServerHandler,
-    model::{CallToolResult, Content, ServerInfo},
+    model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
     tool,
 };
 
@@ -184,6 +184,8 @@ impl ServerHandler for BinanceMCPTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some("Binance API".to_owned()),
+            // Spec-following clients only list tools when the server advertises them.
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
     }

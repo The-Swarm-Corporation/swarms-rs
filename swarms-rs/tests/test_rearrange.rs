@@ -235,6 +235,23 @@ async fn test_duplicate_agent_names_rejected() {
 }
 
 #[tokio::test]
+async fn test_duplicate_agent_names_can_be_fixed_by_removing_the_agent() {
+    let mut rearrange = AgentRearrange::builder()
+        .add_agent(Box::new(MockAgent::new("agent1", "first")))
+        .add_agent(Box::new(MockAgent::new("agent1", "second")))
+        .flow("agent1")
+        .build();
+    assert!(rearrange.validate_flow().is_err());
+
+    rearrange.remove_agent("agent1");
+    rearrange
+        .add_agent(Box::new(MockAgent::new("agent1", "fixed")))
+        .unwrap();
+    assert!(rearrange.validate_flow().is_ok());
+    assert!(rearrange.run("task").await.is_ok());
+}
+
+#[tokio::test]
 async fn test_list_output_keeps_every_response_in_order() {
     let mut rearrange = AgentRearrange::builder()
         .add_agent(Box::new(MockAgent::new("agent1", "response1")))

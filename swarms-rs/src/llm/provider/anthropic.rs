@@ -580,7 +580,7 @@ enum AnthropicToolResultContent {
 }
 
 /// Anthropic API response structure
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnthropicResponse {
     #[allow(dead_code)]
     id: String,
@@ -591,8 +591,10 @@ pub struct AnthropicResponse {
     content: Vec<AnthropicContent>,
     #[allow(dead_code)]
     model: String,
-    #[allow(dead_code)]
     stop_reason: Option<String>,
+    /// Set when `stop_reason` is `refusal` (category and explanation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stop_details: Option<serde_json::Value>,
     #[allow(dead_code)]
     stop_sequence: Option<String>,
     #[allow(dead_code)]
@@ -600,7 +602,7 @@ pub struct AnthropicResponse {
 }
 
 /// Anthropic usage information
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnthropicUsage {
     #[allow(dead_code)]
     input_tokens: u32,
@@ -780,6 +782,35 @@ impl Model for Anthropic {
             // Convert Anthropic response to internal format
             let choice =
                 convert_anthropic_response_to_internal(anthropic_response.content.clone())?;
+
+            match anthropic_response.stop_reason.as_deref() {
+                // A refusal is an HTTP 200 that usually carries no text.
+                Some("refusal") => {
+                    return Err(CompletionError::Provider(format!(
+                        "Claude declined the request (stop_reason: refusal){}",
+                        anthropic_response
+                            .stop_details
+                            .as_ref()
+                            .map(|d| format!(": {d}"))
+                            .unwrap_or_default()
+                    )));
+                },
+                // A tool call cut off by the token limit has incomplete input; don't run it.
+                Some("max_tokens")
+                    if choice
+                        .iter()
+                        .any(|c| matches!(c, llm::completion::AssistantContent::ToolCall(_))) =>
+                {
+                    return Err(CompletionError::Response(
+                        "Response hit max_tokens during a tool call; increase max_tokens"
+                            .to_string(),
+                    ));
+                },
+                Some("max_tokens") => {
+                    log::warn!("Anthropic response was truncated at max_tokens");
+                },
+                _ => {},
+            }
 
             Ok(CompletionResponse {
                 choice,

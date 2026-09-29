@@ -232,3 +232,53 @@ fn defaults_to_auto_router() {
     // Constructing with an invalid header value logs and keeps the client usable.
     let _client = OpenRouter::new("test-key").with_app_name("bad\nname");
 }
+
+/// These tests set process-wide env vars, so they must not interleave.
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn any_model_routes_vendor_names_through_openrouter() {
+    use swarms_rs::llm::provider::any::AnyModel;
+    let _guard = ENV_LOCK.lock().await;
+    let (base_url, captured) = mock_server(
+        200,
+        chat_response(json!({"role": "assistant", "content": "Hi from Gemini"})),
+    )
+    .await;
+    unsafe {
+        std::env::set_var("OPENROUTER_API_KEY", "router-key");
+        std::env::set_var("OPENROUTER_API_BASE", &base_url);
+    }
+
+    let model = AnyModel::from_model_name("google/gemini-3.8-flash").unwrap();
+    assert!(matches!(model, AnyModel::OpenRouter(_)));
+    let response = model.completion(request("Hi")).await.unwrap();
+
+    assert!(matches!(&response.choice[0], AssistantContent::Text(t) if t.text == "Hi from Gemini"));
+    assert_eq!(
+        response.raw_response["choices"][0]["message"]["content"],
+        "Hi from Gemini"
+    );
+    let captured = captured.await.unwrap();
+    assert_eq!(captured.body["model"], "google/gemini-3.8-flash");
+    assert_eq!(captured.header("authorization"), Some("Bearer router-key"));
+}
+
+#[tokio::test]
+async fn any_model_reports_missing_api_key() {
+    use swarms_rs::llm::provider::any::{AnyModel, ModelNameError};
+    let _guard = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::remove_var("OPENROUTER_API_KEY");
+    }
+    let err = AnyModel::from_model_name("meta-llama/llama-4-maverick")
+        .err()
+        .expect("missing key must be an error");
+    assert_eq!(
+        err,
+        ModelNameError::MissingApiKey {
+            model: "meta-llama/llama-4-maverick".to_string(),
+            var: "OPENROUTER_API_KEY"
+        }
+    );
+}

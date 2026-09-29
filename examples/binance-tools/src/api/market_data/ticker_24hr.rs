@@ -48,6 +48,7 @@ pub struct Ticker24HrRequest {
     /// | 21-100 | 40 |
     /// | 101 or more | 80 |
     /// | symbols parameter is omitted | 80 |
+    #[serde(serialize_with = "super::symbols_as_json")]
     pub symbols: Option<Vec<String>>,
     /// Supported values: FULL or MINI.
     /// If none provided, the default is FULL

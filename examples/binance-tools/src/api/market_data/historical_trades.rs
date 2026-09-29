@@ -11,7 +11,7 @@ pub async fn historical_trades(
     client: &Client,
     base_url: &str,
     mut params: HistoricalTradesRequest,
-) -> Result<HistoricalTradesResponse> {
+) -> Result<Vec<HistoricalTradesResponse>> {
     params.validate()?;
     if params.limit.is_none() {
         params.limit = Some(500);

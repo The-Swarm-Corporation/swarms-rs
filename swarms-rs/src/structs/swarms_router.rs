@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use serde::Deserialize;
 
 use crate::agent::SwarmsAgent;
+use crate::llm::Model;
 use crate::llm::provider::openai::OpenAI;
 use crate::prompts::multi_agent_collab_prompt::MULTI_AGENT_COLLAB_PROMPT;
 use crate::structs::agent::Agent;
@@ -20,8 +21,15 @@ pub enum SwarmType {
     AgentRearrange,
 }
 
-/// Configuration model for SwarmsRouter
-pub struct SwarmRouterConfig {
+/// Configuration model for SwarmsRouter.
+///
+/// Generic over the agents' model, so agents built on any provider (Anthropic, OpenRouter,
+/// `AnyModel`, ...) can be routed; it defaults to `OpenAI`.
+pub struct SwarmRouterConfig<M = OpenAI>
+where
+    M: Model + Clone + Send + Sync + 'static,
+    M::RawCompletionResponse: Clone + Send + Sync,
+{
     /// Name identifier for the SwarmRouter instance.
     pub name: String,
 
@@ -32,7 +40,7 @@ pub struct SwarmRouterConfig {
     pub swarm_type: SwarmType,
 
     /// List of the agents to use.
-    pub agents: Vec<SwarmsAgent<OpenAI>>,
+    pub agents: Vec<SwarmsAgent<M>>,
 
     /// Rules to inject in every agent
     pub rules: Option<String>,
@@ -47,22 +55,34 @@ pub struct SwarmRouterConfig {
     pub max_loops: Option<u32>,
 }
 
-impl Default for SwarmRouterConfig {
-    fn default() -> SwarmRouterConfig {
+// Only for the default model, so `SwarmRouterConfig::default()` keeps inferring `OpenAI`;
+// for other models use `SwarmRouterConfig::with_agents`.
+impl Default for SwarmRouterConfig<OpenAI> {
+    fn default() -> Self {
+        Self::with_agents(Vec::new())
+    }
+}
+
+impl<M> SwarmRouterConfig<M>
+where
+    M: Model + Clone + Send + Sync + 'static,
+    M::RawCompletionResponse: Clone + Send + Sync,
+{
+    /// A config with the default settings for agents on any model, e.g.
+    /// `SwarmRouterConfig::with_agents(vec![claude_agent])`.
+    pub fn with_agents(agents: Vec<SwarmsAgent<M>>) -> Self {
         SwarmRouterConfig {
             name: String::from("swarm-router"),
             description: String::from("Routes your task to the desired swarm"),
             swarm_type: SwarmType::SequentialWorkflow,
-            agents: Vec::new(),
+            agents,
             rules: None,
             multi_agent_collab_prompt: true,
             flow: None,
             max_loops: None,
         }
     }
-}
 
-impl SwarmRouterConfig {
     /// Ensure that all preconditions are met.
     fn validate(&self) -> Result<(), SwarmRouterError> {
         tracing::info!("Initializing reliability checks");
@@ -118,10 +138,9 @@ impl SwarmRouterConfig {
     }
 }
 
-/// Struct that dynamically routes tasks to different swarm types based on user selection or automatic matching.
-/// The SwarmRouter enables flexible task execution by either using a specified swarm type or automatically determining
-/// the most suitable swarm type for a given task. It handles task execution while managing logging, type validation,
-/// and metadata capture.
+/// Runs tasks on the swarm type chosen in [`SwarmRouterConfig::swarm_type`].
+/// The SwarmRouter builds that structure from the config, injects rules and collaboration prompts into
+/// every agent, and handles task execution and logging.
 /// Available Swarm Types:
 ///     - SequentialWorkflow: Executes tasks sequentially
 ///     - ConcurrentWorkflow: Executes tasks in parallel
@@ -146,7 +165,11 @@ impl SwarmRouter {
     ///  # Error
     ///     
     ///  - SwarmRouterError::ValidationError: If fails during config validation
-    pub fn new_with_config(config: SwarmRouterConfig) -> Result<SwarmRouter, SwarmRouterError> {
+    pub fn new_with_config<M>(config: SwarmRouterConfig<M>) -> Result<SwarmRouter, SwarmRouterError>
+    where
+        M: Model + Clone + Send + Sync + 'static,
+        M::RawCompletionResponse: Clone + Send + Sync,
+    {
         config.validate()?;
 
         tracing::info!(
@@ -165,7 +188,7 @@ impl SwarmRouter {
         Ok(swarm_router)
     }
 
-    ///  Execute a task on the selected swarm type with specified compute resources.
+    ///  Execute a task on the configured swarm type.
     ///
     ///  # Params
     ///
@@ -190,7 +213,7 @@ impl SwarmRouter {
         result
     }
 
-    /// Execute a batch of tasks on the selected or matched swarm type.
+    /// Execute a batch of tasks on the configured swarm type.
     ///
     /// # Params
     ///
@@ -266,11 +289,15 @@ impl SwarmRouter {
         }
     }
 
-    fn create_swarm_router(config: SwarmRouterConfig) -> SwarmRouter {
+    fn create_swarm_router<M>(config: SwarmRouterConfig<M>) -> SwarmRouter
+    where
+        M: Model + Clone + Send + Sync + 'static,
+        M::RawCompletionResponse: Clone + Send + Sync,
+    {
         let agents = config
             .agents
             .into_iter()
-            .map(boxed_agent)
+            .map(|agent| Box::new(agent) as Box<dyn Agent>)
             .collect::<Vec<_>>();
 
         match config.swarm_type {
@@ -304,9 +331,8 @@ impl SwarmRouter {
                     builder = builder.max_loops(max_loops);
                 }
 
-                if let Some(rules) = config.rules {
-                    builder = builder.rules(rules);
-                }
+                // Rules were already added to every agent's system prompt (handle_rules);
+                // passing them to the rearrange too would repeat them in the conversation.
 
                 let rearrange = builder.build();
                 SwarmRouter::AgentRearrange(rearrange)
@@ -331,10 +357,14 @@ impl SwarmRouter {
 /// - SwarmRouterError::ValidationError: If fails during config validation
 /// - SwarmRouterError::SequentialWorkflow: If fails during execution of sequential workflow
 /// - SwarmRouterError::ConcurrentWorkflow: If fails during execution of concurrent workflow
-pub async fn swarm_router(
+pub async fn swarm_router<M>(
     task: &str,
-    config: SwarmRouterConfig,
-) -> Result<AgentConversation, SwarmRouterError> {
+    config: SwarmRouterConfig<M>,
+) -> Result<AgentConversation, SwarmRouterError>
+where
+    M: Model + Clone + Send + Sync + 'static,
+    M::RawCompletionResponse: Clone + Send + Sync,
+{
     tracing::info!(
         "Creating SwarmRouter with name: {}, swarm_type: {:?}",
         config.name,
@@ -348,10 +378,6 @@ pub async fn swarm_router(
     tracing::info!("Task execution completed successfully");
 
     Ok(result)
-}
-
-fn boxed_agent(agent: SwarmsAgent<OpenAI>) -> Box<dyn Agent> {
-    Box::new(agent)
 }
 
 #[derive(Debug, thiserror::Error)]

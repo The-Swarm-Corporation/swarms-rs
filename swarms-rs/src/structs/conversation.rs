@@ -9,7 +9,10 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::structs::persistence::{self, PersistenceError};
+use crate::structs::{
+    persistence::{self, PersistenceError},
+    tool::ToolCallOutput,
+};
 
 #[derive(Debug, Error)]
 pub enum ConversationError {
@@ -42,6 +45,23 @@ impl AgentShortMemory {
             .entry(task.into())
             .or_insert(AgentConversation::new(conversation_owner.into()));
         conversation.add(role, message.into())
+    }
+
+    /// Record one turn of tool calls, keeping each call's typed output and any text the
+    /// model wrote with them.
+    pub fn add_tool_calls(
+        &self,
+        task: impl Into<String>,
+        conversation_owner: impl Into<String>,
+        role: Role,
+        text: Option<String>,
+        outputs: Vec<ToolCallOutput>,
+    ) {
+        let mut conversation = self
+            .0
+            .entry(task.into())
+            .or_insert(AgentConversation::new(conversation_owner.into()));
+        conversation.add_tool_calls(role, text, outputs)
     }
 }
 
@@ -81,20 +101,50 @@ impl AgentConversation {
 
     /// Add a message to the conversation history.
     pub fn add(&mut self, role: Role, message: String) {
-        // Only check message limit if it's set
-        if let Some(max) = self.max_messages {
-            if self.history.len() >= max {
-                // Remove oldest messages to make room for new ones (bounded for max == 0)
-                let excess = (self.history.len() + 1 - max).min(self.history.len());
-                self.history.drain(0..excess);
-            }
-        }
-
         let timestamp = Local::now().timestamp_millis();
-        let message = Message {
+        self.push(Message {
             role,
             content: Content::Text(format!("Timestamp(millis): {timestamp} \n{message}")),
-        };
+        });
+    }
+
+    /// Add one turn of tool calls, keeping each call's typed output, along with any `text`
+    /// the model wrote in the same reply. Its text form (used by `Display`,
+    /// [`Self::export_to_file`] and the LLM history) matches what [`Self::add`] would store
+    /// for the text followed by the formatted results.
+    pub fn add_tool_calls(
+        &mut self,
+        role: Role,
+        text: Option<String>,
+        outputs: Vec<ToolCallOutput>,
+    ) {
+        self.push(Message {
+            role,
+            content: Content::ToolCalls {
+                timestamp_millis: Local::now().timestamp_millis(),
+                text: text.filter(|t| !t.trim().is_empty()),
+                outputs,
+            },
+        });
+    }
+
+    /// Every tool call recorded in this conversation, oldest first.
+    pub fn tool_outputs(&self) -> impl Iterator<Item = &ToolCallOutput> {
+        self.history
+            .iter()
+            .flat_map(|message| message.content.tool_outputs())
+    }
+
+    fn push(&mut self, message: Message) {
+        // Only check message limit if it's set
+        if let Some(max) = self.max_messages
+            && self.history.len() >= max
+        {
+            // Remove oldest messages to make room for new ones (bounded for max == 0)
+            let excess = (self.history.len() + 1 - max).min(self.history.len());
+            self.history.drain(0..excess);
+        }
+
         self.history.push(message);
 
         if let Some(filepath) = &self.save_filepath {
@@ -139,6 +189,13 @@ impl AgentConversation {
         Ok(serde_json::to_string(&self.history)?)
     }
 
+    /// Replace the history with messages from JSON produced by [`Self::to_json`]. Unlike the
+    /// text format, this round-trips any message content exactly.
+    pub fn load_json(&mut self, json: &str) -> Result<(), ConversationError> {
+        self.history = serde_json::from_str(json)?;
+        Ok(())
+    }
+
     /// Save the conversation history to a JSON file.
     async fn save_as_json(filepath: &Path, data: &[Message]) -> Result<(), ConversationError> {
         let json_data = serde_json::to_string_pretty(data)?;
@@ -161,9 +218,16 @@ impl AgentConversation {
         Ok(())
     }
 
-    /// Import the conversation history from a file written by [`Self::export_to_file`]
+    /// Import the conversation history from a file written by [`Self::export_to_file`], or
+    /// from a JSON file holding the output of [`Self::to_json`].
     pub async fn import_from_file(&mut self, filepath: &Path) -> Result<(), ConversationError> {
         let data = persistence::load_from_file(filepath).await?;
+        if data.trim_ascii_start().starts_with(b"[")
+            && let Ok(history) = serde_json::from_slice::<Vec<Message>>(&data)
+        {
+            self.history = history;
+            return Ok(());
+        }
         let text = String::from_utf8_lossy(&data);
         // Each message starts with a `Name(User): ` or `Name(Assistant): ` header; message
         // bodies (which include the timestamp line) can span several lines.
@@ -182,15 +246,13 @@ impl AgentConversation {
                     role,
                     content: Content::Text(content.to_string()),
                 }),
-                (
-                    None,
-                    Some(Message {
-                        content: Content::Text(text),
-                        ..
-                    }),
-                ) => {
-                    text.push('\n');
-                    text.push_str(line);
+                // Imported messages are always text (the text export doesn't keep tool-call
+                // structure; `to_json` does).
+                (None, Some(message)) => {
+                    if let Content::Text(text) = &mut message.content {
+                        text.push('\n');
+                        text.push_str(line);
+                    }
                 },
                 (None, None) if line.is_empty() => {},
                 (None, None) => {
@@ -238,6 +300,25 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Content {
     Text(String),
+    /// The tool calls an agent made in one turn, kept structured so workflows can read the
+    /// results back without parsing. Displays as the same text the agent sends to the LLM:
+    /// any text the model wrote with the calls, then one block per call.
+    ToolCalls {
+        timestamp_millis: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        outputs: Vec<ToolCallOutput>,
+    },
+}
+
+impl Content {
+    /// The tool calls in this message (empty for text).
+    pub fn tool_outputs(&self) -> &[ToolCallOutput] {
+        match self {
+            Content::Text(_) => &[],
+            Content::ToolCalls { outputs, .. } => outputs,
+        }
+    }
 }
 
 impl Display for Role {
@@ -253,6 +334,21 @@ impl Display for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Content::Text(text) => f.pad(text),
+            Content::ToolCalls {
+                timestamp_millis,
+                text: reply,
+                outputs,
+            } => {
+                let mut text = format!("Timestamp(millis): {timestamp_millis} \n");
+                if let Some(reply) = reply {
+                    text.push_str(reply);
+                    text.push_str("\n\n");
+                }
+                for output in outputs {
+                    text.push_str(&output.to_string());
+                }
+                f.pad(&text)
+            },
         }
     }
 }

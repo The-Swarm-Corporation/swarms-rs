@@ -384,6 +384,8 @@ impl AgentRearrange {
         if self.verbose {
             tracing::info!("Removing agent {} from the swarm", agent_name);
         }
+        // Removing the agent resolves a duplicate-name error recorded at build time.
+        self.duplicate_agent_names.retain(|name| name != agent_name);
         self.agents.remove(agent_name)
     }
 

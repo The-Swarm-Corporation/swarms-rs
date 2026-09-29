@@ -2,6 +2,7 @@
 name = "swarms-macro"
 version = "0.1.1"
 edition = "2024"
+rust-version = "1.88"
 description = "Procedural macros for the swarms-rs framework"
 license = "Apache-2.0"
 repository = "https://github.com/The-Swarm-Corporation/swarms-rs"

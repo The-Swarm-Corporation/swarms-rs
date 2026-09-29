@@ -4,8 +4,8 @@ use rmcp::{
     model::CallToolRequestParam,
     service::{DynService, RunningService},
 };
-use serde::{Deserialize, Serialize};
-use std::{future::Future, ops::Deref, sync::Arc};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::{fmt::Display, future::Future, ops::Deref, sync::Arc};
 use thiserror::Error;
 
 use crate::llm::request::ToolDefinition;
@@ -18,6 +18,71 @@ pub enum ToolError {
 
     #[error("JsonError: {0}")]
     JsonError(#[from] serde_json::Error),
+}
+
+/// Contains the complete information about a single tool execution.
+///
+/// When an agent executes a tool, this structure captures all the relevant
+/// information about the call, including the tool name, arguments passed,
+/// and the result returned. The agent keeps these in its conversation (see
+/// [`Content::ToolCalls`](crate::structs::conversation::Content::ToolCalls)), so
+/// workflows can read tool results back without parsing text.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use swarms_rs::agent::ToolCallOutput;
+///
+/// let tool_output = ToolCallOutput {
+///     name: "calculator".to_string(),
+///     args: r#"{"operation": "add", "a": 5, "b": 3}"#.to_string(),
+///     result: "8".to_string(),
+/// };
+///
+/// println!("Tool {} with args {} returned: {}",
+///          tool_output.name, tool_output.args, tool_output.result);
+/// assert_eq!(tool_output.result_as::<i64>().unwrap(), 8);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallOutput {
+    /// The name of the tool that was executed.
+    ///
+    /// This corresponds to the tool's identifier as registered with the agent.
+    pub name: String,
+
+    /// The arguments passed to the tool as a JSON string.
+    ///
+    /// The arguments are serialized as JSON to provide a consistent format
+    /// regardless of the tool's specific parameter structure.
+    pub args: String,
+
+    /// The result returned by the tool's execution as a string.
+    ///
+    /// All tool results are converted to strings for consistent handling,
+    /// even if the tool internally works with other data types.
+    pub result: String,
+}
+
+impl ToolCallOutput {
+    /// Deserialize the result into `T`.
+    ///
+    /// Tools defined with `#[tool]` return their output serialized as JSON, so this recovers
+    /// the typed value. Results that aren't JSON (tool errors, MCP text, sub-agent answers)
+    /// return an error.
+    pub fn result_as<T: DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_str(&self.result)
+    }
+}
+
+/// The text form the agent keeps in memory and sends back to the LLM.
+impl Display for ToolCallOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[Tool name]: {}\n[Tool args]: {}\n[Tool result]: {}\n\n",
+            self.name, self.args, self.result
+        )
+    }
 }
 
 pub trait Tool: Sized + Send + Sync {
@@ -117,54 +182,56 @@ impl Tool for MCPTool {
             .await
             .map_err(|e| MCPToolError(format!("MCP tool call failed: {e}")))?;
 
-        if result.is_error.unwrap_or(false) {
-            return Err(ToolError::from(MCPToolError(format!(
-                "MCP tool call failed, content: {:?}",
-                result.content
-            ))));
-        }
-
-        Ok(result
+        let text = result
             .content
             .into_iter()
-            .map(|content| match content.raw {
-                rmcp::model::RawContent::Text(raw_text_content) => raw_text_content.text,
-                rmcp::model::RawContent::Image(raw_image_content) => format!(
-                    "data:{};base64,{}",
-                    raw_image_content.mime_type, raw_image_content.data
-                ),
-                rmcp::model::RawContent::Resource(rmcp::model::RawEmbeddedResource {
-                    resource,
-                }) => match resource {
-                    rmcp::model::ResourceContents::TextResourceContents {
-                        uri,
-                        mime_type,
-                        text,
-                    } => format!(
-                        "[URI]:{}\n{}[TEXT]:{}",
-                        uri,
-                        mime_type.map_or("".to_owned(), |m| format!("[MIME]:{}\n", m)),
-                        text
-                    ),
-                    rmcp::model::ResourceContents::BlobResourceContents {
-                        uri,
-                        mime_type,
-                        blob,
-                    } => format!(
-                        "[URI]:{}\n{}[BLOB]:{}",
-                        uri,
-                        mime_type.map_or("".to_owned(), |mime| format!("[MIME]:{mime}\n")),
-                        blob
-                    ),
-                },
-                // TODO: latest version should uncomment the following line, but now we use old version
-                // rmcp::model::RawContent::Audio(annotated) => format!(
-                //     "data:{};base64,{}",
-                //     annotated.raw.mime_type, annotated.raw.data
-                // ),
-            })
+            .map(|content| mcp_content_to_text(content.raw))
             .collect::<Vec<_>>()
-            .join(""))
+            .join("\n");
+
+        if result.is_error.unwrap_or(false) {
+            return Err(ToolError::from(MCPToolError(format!(
+                "MCP tool returned an error: {text}"
+            ))));
+        }
+        Ok(text)
+    }
+}
+
+/// Render one MCP result block as text for the model. Binary data (images, blobs) is
+/// summarized: a model can't read base64 as text, and it would be re-sent on every loop.
+fn mcp_content_to_text(content: rmcp::model::RawContent) -> String {
+    match content {
+        rmcp::model::RawContent::Text(raw_text_content) => raw_text_content.text,
+        rmcp::model::RawContent::Image(image) => format!(
+            "[image: {}, {} bytes of base64 data]",
+            image.mime_type,
+            image.data.len()
+        ),
+        rmcp::model::RawContent::Resource(rmcp::model::RawEmbeddedResource { resource }) => {
+            match resource {
+                rmcp::model::ResourceContents::TextResourceContents {
+                    uri,
+                    mime_type,
+                    text,
+                } => format!(
+                    "[URI]:{}\n{}[TEXT]:{}",
+                    uri,
+                    mime_type.map_or("".to_owned(), |m| format!("[MIME]:{}\n", m)),
+                    text
+                ),
+                rmcp::model::ResourceContents::BlobResourceContents {
+                    uri,
+                    mime_type,
+                    blob,
+                } => format!(
+                    "[URI]:{}\n{}[BLOB]: {} bytes of base64 data",
+                    uri,
+                    mime_type.map_or("".to_owned(), |mime| format!("[MIME]:{mime}\n")),
+                    blob.len()
+                ),
+            }
+        },
     }
 }
 
@@ -194,5 +261,22 @@ impl From<&rmcp::model::Tool> for ToolDefinition {
 impl From<MCPToolError> for ToolError {
     fn from(value: MCPToolError) -> Self {
         Self::ToolCallError(Box::new(value))
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_content_is_readable_text() {
+        let text = rmcp::model::RawContent::text("hello");
+        assert_eq!(mcp_content_to_text(text), "hello");
+
+        let image = rmcp::model::RawContent::image("aGVsbG8=", "image/png");
+        assert_eq!(
+            mcp_content_to_text(image),
+            "[image: image/png, 8 bytes of base64 data]"
+        );
     }
 }

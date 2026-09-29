@@ -271,6 +271,15 @@ fn is_custom_struct(ty: &Type) -> bool {
     }
 }
 
+/// Whether `ident` appears anywhere in `tokens`, including inside nested groups.
+fn mentions_ident(tokens: TokenStream2, ident: &Ident) -> bool {
+    tokens.into_iter().any(|tree| match tree {
+        proc_macro2::TokenTree::Ident(found) => &found == ident,
+        proc_macro2::TokenTree::Group(group) => mentions_ident(group.stream(), ident),
+        _ => false,
+    })
+}
+
 pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let tool_attr = parse_macro_input!(attr as ToolAttribute);
     let input_fn = parse_macro_input!(item as ItemFn);
@@ -280,6 +289,22 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         Some(name) => name,
         None => input_fn.sig.ident.unraw().to_string(),
     };
+    // OpenAI and Anthropic reject any other tool name with a 400 on every request.
+    let valid_name = !tool_name.is_empty()
+        && tool_name.len() <= 64
+        && tool_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid_name {
+        return Error::new_spanned(
+            &input_fn.sig.ident,
+            format!(
+                "tool name `{tool_name}` must be 1-64 characters of ASCII letters, digits, `_` or `-`; set a valid one with #[tool(name = \"...\")]"
+            ),
+        )
+        .to_compile_error()
+        .into();
+    }
 
     let struct_name = quote::format_ident!("{}Tool", to_pascal_case(&tool_name));
     let static_name = quote::format_ident!("{}", to_pascal_case(&tool_name));
@@ -405,9 +430,10 @@ pub fn tool_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     // (e.g. `fn search(args: SearchArgs)`), so fall back to `{Name}ToolArgs` then.
     let args_struct_name = {
         let name = quote::format_ident!("{}Args", to_pascal_case(&tool_name));
-        let clashes = arg_types.iter().any(|ty| {
-            matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == name))
-        });
+        // Look through generics too, e.g. `Option<SearchArgs>` or `Vec<SearchArgs>`.
+        let clashes = arg_types
+            .iter()
+            .any(|ty| mentions_ident(ty.to_token_stream(), &name));
         if clashes {
             quote::format_ident!("{}ToolArgs", to_pascal_case(&tool_name))
         } else {

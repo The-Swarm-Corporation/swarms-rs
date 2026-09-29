@@ -392,3 +392,113 @@ mod integration_tests {
         }
     }
 }
+
+// ============================================================================
+// Response handling against a local mock server (no API key needed)
+// ============================================================================
+
+mod mock_server_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Answer one request with `body` (status 200) and return the base URL.
+    async fn serve_once(body: serde_json::Value) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = socket.read(&mut chunk).await.unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
+                if let Some(end) = head_end {
+                    let head = String::from_utf8_lossy(&buf[..end]).to_lowercase();
+                    let len: usize = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length: "))
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    if buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
+            let body = body.to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn message(content: serde_json::Value, stop_reason: &str) -> serde_json::Value {
+        json!({
+            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+            "content": content, "stop_reason": stop_reason, "stop_sequence": null,
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })
+    }
+
+    fn request() -> CompletionRequest {
+        CompletionRequest {
+            prompt: Message::user("Hi"),
+            system_prompt: None,
+            chat_history: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: Some(1024),
+        }
+    }
+
+    #[tokio::test]
+    async fn thinking_blocks_are_skipped_and_text_is_kept() {
+        let base = serve_once(message(
+            json!([
+                {"type": "thinking", "thinking": "", "signature": "sig"},
+                {"type": "text", "text": "The TV is 55\" wide."}
+            ]),
+            "end_turn",
+        ))
+        .await;
+        let response = Anthropic::from_url(base, "key".to_string())
+            .completion(request())
+            .await
+            .unwrap();
+        assert_eq!(response.choice.len(), 1);
+        assert!(
+            matches!(&response.choice[0], AssistantContent::Text(t) if t.text == "The TV is 55\" wide.")
+        );
+    }
+
+    #[tokio::test]
+    async fn refusal_is_an_error_with_details() {
+        let mut body = message(json!([]), "refusal");
+        body["stop_details"] = json!({"type": "refusal", "category": "cyber"});
+        let base = serve_once(body).await;
+        let err = Anthropic::from_url(base, "key".to_string())
+            .completion(request())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("refusal"), "{err}");
+        assert!(err.to_string().contains("cyber"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn truncated_tool_call_is_not_returned() {
+        let base = serve_once(message(
+            json!([{"type": "tool_use", "id": "t1", "name": "search", "input": {"q": "par"}}]),
+            "max_tokens",
+        ))
+        .await;
+        let err = Anthropic::from_url(base, "key".to_string())
+            .completion(request())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("max_tokens"), "{err}");
+    }
+}

@@ -80,6 +80,7 @@ fn test_agent_conversation_update_message() {
 
     match &conversation.history[0].content {
         Content::Text(text) => assert!(text.contains("Updated")),
+        other => panic!("expected text content, got {other:?}"),
     }
 }
 
@@ -371,6 +372,7 @@ fn test_agent_conversation_message_timestamps() {
         Content::Text(text) => {
             assert!(text.contains("Timestamp(millis):"));
         },
+        other => panic!("expected text content, got {other:?}"),
     }
 }
 

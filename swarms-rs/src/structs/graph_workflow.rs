@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use futures::future::BoxFuture;
 use petgraph::{
     Direction,
@@ -232,12 +232,15 @@ impl DAGWorkflow {
             }
         }
         // Execute the workflow
-        self.execute_node(
+        let started = Arc::new(DashSet::new());
+        started.insert(*start_idx);
+        self.execute_node_tracked(
             *start_idx,
             input,
             Arc::clone(&results),
             edge_tracker,
             processed_nodes,
+            started,
         )
         .await?;
         Ok(Arc::into_inner(results).expect("Results should not be poisoned"))
@@ -250,6 +253,30 @@ impl DAGWorkflow {
         results: Arc<DashMap<String, Result<String, GraphWorkflowError>>>,
         edge_tracker: Arc<DashMap<(NodeIndex, NodeIndex), bool>>,
         processed_nodes: Arc<DashMap<NodeIndex, Vec<(NodeIndex, String)>>>,
+    ) -> Result<String, GraphWorkflowError> {
+        let started = Arc::new(DashSet::new());
+        started.insert(node_idx);
+        self.execute_node_tracked(
+            node_idx,
+            input,
+            results,
+            edge_tracker,
+            processed_nodes,
+            started,
+        )
+        .await
+    }
+
+    /// `started` holds every node already claimed in this run, so a node that several
+    /// branches make ready at the same moment still runs once.
+    async fn execute_node_tracked(
+        &self,
+        node_idx: NodeIndex,
+        input: String,
+        results: Arc<DashMap<String, Result<String, GraphWorkflowError>>>,
+        edge_tracker: Arc<DashMap<(NodeIndex, NodeIndex), bool>>,
+        processed_nodes: Arc<DashMap<NodeIndex, Vec<(NodeIndex, String)>>>,
+        started: Arc<DashSet<NodeIndex>>,
     ) -> Result<String, GraphWorkflowError> {
         // Get the agent name from the node
         let agent_name = &self
@@ -293,6 +320,7 @@ impl DAGWorkflow {
             results,
             edge_tracker,
             processed_nodes,
+            started,
         )
         .await;
 
@@ -313,6 +341,7 @@ impl DAGWorkflow {
         results: Arc<DashMap<String, Result<String, GraphWorkflowError>>>,
         edge_tracker: Arc<DashMap<(NodeIndex, NodeIndex), bool>>,
         processed_nodes: Arc<DashMap<NodeIndex, Vec<(NodeIndex, String)>>>,
+        started: Arc<DashSet<NodeIndex>>,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let mut targets = Vec::new();
@@ -343,12 +372,15 @@ impl DAGWorkflow {
                 let results = Arc::clone(&results);
                 let edge_tracker = Arc::clone(&edge_tracker);
                 let processed_nodes = Arc::clone(&processed_nodes);
+                let started = Arc::clone(&started);
                 async move {
                     let all_resolved = self
                         .workflow
                         .edges_directed(target, Direction::Incoming)
                         .all(|e| edge_tracker.contains_key(&(e.source(), target)));
-                    if !all_resolved {
+                    // Another branch may have resolved the last edge first and already
+                    // started (or skipped) this target; claim it atomically.
+                    if !all_resolved || !started.insert(target) {
                         return;
                     }
 
@@ -364,15 +396,29 @@ impl DAGWorkflow {
                     match aggregated_input {
                         Some(input) => {
                             if let Err(e) = self
-                                .execute_node(target, input, results, edge_tracker, processed_nodes)
+                                .execute_node_tracked(
+                                    target,
+                                    input,
+                                    results,
+                                    edge_tracker,
+                                    processed_nodes,
+                                    started,
+                                )
                                 .await
                             {
                                 tracing::error!("Failed to execute node: {:?}", e);
                             }
                         },
                         None => {
-                            self.propagate(target, None, results, edge_tracker, processed_nodes)
-                                .await
+                            self.propagate(
+                                target,
+                                None,
+                                results,
+                                edge_tracker,
+                                processed_nodes,
+                                started,
+                            )
+                            .await
                         },
                     }
                 }

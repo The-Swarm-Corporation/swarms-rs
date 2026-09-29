@@ -25,20 +25,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (ctrlc_tx, ctrlc_rx) = tokio::sync::oneshot::channel::<()>();
     let (sse_cancel_tx, sse_cancel_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
+        // Local only by default (as documented); set BINANCE_MCP_SSE_ADDR to expose it.
         let sse_addr = env::var("BINANCE_MCP_SSE_ADDR")
-            .unwrap_or("0.0.0.0:8000".parse().unwrap())
+            .unwrap_or_else(|_| "127.0.0.1:8000".to_owned())
             .parse()
             .expect("Invalid SSE address");
         tracing::info!("Starting SSE server at {}", sse_addr);
-        let ct = SseServer::serve(sse_addr)
-            .await
-            .expect("Failed to start SSE server")
-            .with_service(BinanceMCPTools::new);
+        // If the port is taken (e.g. another instance), keep serving over stdio.
+        let ct = match SseServer::serve(sse_addr).await {
+            Ok(server) => server.with_service(BinanceMCPTools::new),
+            Err(e) => {
+                tracing::error!("Failed to start SSE server at {sse_addr}: {e}");
+                return;
+            }
+        };
 
         tokio::select! {
             _ = ctrlc_rx => {
                 ct.cancel();
-                sse_cancel_tx.send(()).unwrap();
+                let _ = sse_cancel_tx.send(());
             }
         }
     });
@@ -49,9 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::signal::ctrl_c().await?;
     tracing::info!("Stopping Binance MCP Server...");
 
-    ctrlc_tx.send(()).unwrap();
-    service.cancel().await.unwrap();
-    sse_cancel_rx.await.unwrap();
+    // The SSE task may already have exited (e.g. its port was taken).
+    let _ = ctrlc_tx.send(());
+    service.cancel().await?;
+    let _ = sse_cancel_rx.await;
 
     tracing::info!("Binance MCP Server stopped.");
     Ok(())

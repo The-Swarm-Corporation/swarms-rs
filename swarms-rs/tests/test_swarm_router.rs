@@ -426,3 +426,50 @@ fn test_swarm_router_config_change_swarm_type() {
     config.swarm_type = serde_json::from_str(r#""AgentRearrange""#).unwrap();
     assert!(matches!(config.swarm_type, SwarmType::AgentRearrange));
 }
+
+/// A model other than OpenAI: echoes the last user message back.
+#[derive(Clone)]
+struct EchoModel;
+
+impl swarms_rs::llm::Model for EchoModel {
+    type RawCompletionResponse = ();
+
+    fn completion(
+        &self,
+        request: swarms_rs::llm::request::CompletionRequest,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<swarms_rs::llm::request::CompletionResponse<()>, swarms_rs::llm::CompletionError>,
+    > {
+        let seen = request.chat_history.len();
+        Box::pin(async move {
+            Ok(swarms_rs::llm::request::CompletionResponse {
+                choice: vec![swarms_rs::llm::completion::AssistantContent::text(format!(
+                    "echo after {seen} messages"
+                ))],
+                raw_response: (),
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_router_accepts_agents_on_any_model() {
+    let agents = vec![
+        swarms_rs::agent::SwarmsAgentBuilder::new_with_model(EchoModel)
+            .agent_name("first")
+            .build(),
+        swarms_rs::agent::SwarmsAgentBuilder::new_with_model(EchoModel)
+            .agent_name("second")
+            .build(),
+    ];
+    let mut config = SwarmRouterConfig::with_agents(agents);
+    config.swarm_type = SwarmType::ConcurrentWorkflow;
+
+    let router = SwarmRouter::new_with_config(config).unwrap();
+    let conversation = router.run("hello").await.unwrap();
+    let text = conversation.to_string();
+    assert!(text.contains("first(Assistant)"), "{text}");
+    assert!(text.contains("second(Assistant)"), "{text}");
+    assert!(text.contains("echo after"), "{text}");
+}

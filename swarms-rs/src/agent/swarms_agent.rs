@@ -85,6 +85,7 @@
 //! - **Task Hashing**: Efficient state management using content-based hashing
 
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     hash::{Hash, Hasher},
     ops::Deref,
@@ -120,13 +121,18 @@ use crate::{
     },
     log_agent, log_error_ctx, log_llm, log_memory, log_perf, log_task,
     structs::{
-        conversation::{AgentShortMemory, Role},
+        conversation::{AgentConversation, AgentShortMemory, Role},
         persistence,
         tool::{MCPTool, Tool, ToolDyn},
     },
 };
 
 use crate::structs::agent::{Agent, AgentConfig, AgentError};
+
+use super::delegation::{HandoffArgs, HandoffTool, SubAgentTool, tool_name_for};
+
+// Kept at its original path; it lives in `structs::tool` so conversations can store it.
+pub use crate::structs::tool::ToolCallOutput;
 
 /// Builder pattern implementation for creating `SwarmsAgent` instances with customizable configuration.
 ///
@@ -173,6 +179,8 @@ where
     tools: Vec<ToolDefinition>,
     /// Implementation instances of tools, keyed by tool name
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
+    /// Handoff targets, keyed by the name of the tool that transfers to them
+    handoffs: HashMap<String, Arc<dyn Agent>>,
 }
 
 impl<M> SwarmsAgentBuilder<M>
@@ -208,6 +216,7 @@ where
             system_prompt: None,
             tools: vec![],
             tools_impl: DashMap::new(),
+            handoffs: HashMap::new(),
         }
     }
 
@@ -370,6 +379,77 @@ where
         self.tools_impl.insert(definition.name, tool);
     }
 
+    /// Adds a sub-agent the model can delegate subtasks to.
+    ///
+    /// The model sees a `delegate_to_<name>` tool that takes a `task`; calling it runs the
+    /// sub-agent and returns its answer as the tool result, and this agent carries on. Use
+    /// [`Self::add_handoff`] instead to pass control to another agent for good.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use swarms_rs::llm::provider::openrouter::OpenRouter;
+    ///
+    /// let client = OpenRouter::from_env_with_model("anthropic/claude-opus-5.5");
+    /// let researcher = client
+    ///     .agent_builder()
+    ///     .agent_name("Researcher")
+    ///     .description("Finds facts and sources")
+    ///     .build();
+    /// let coordinator = client
+    ///     .agent_builder()
+    ///     .agent_name("Coordinator")
+    ///     .add_sub_agent(researcher)
+    ///     .build();
+    /// ```
+    pub fn add_sub_agent<A: Agent + 'static>(self, agent: A) -> Self {
+        self.add_sub_agent_boxed(Box::new(agent))
+    }
+
+    /// [`Self::add_sub_agent`] for an agent that is already boxed, such as one from a workflow.
+    pub fn add_sub_agent_boxed(mut self, agent: Box<dyn Agent>) -> Self {
+        let agent: Arc<dyn Agent> = Arc::from(agent);
+        let tool_name = self.unused_tool_name("delegate_to_", &agent.name());
+        let tool = SubAgentTool::new(tool_name, agent);
+        let definition = tool.definition();
+        self.register_tool(definition, Arc::new(tool));
+        self
+    }
+
+    /// Adds an agent this agent can hand the task off to.
+    ///
+    /// The model sees a `transfer_to_<name>` tool that takes a `task` and optional `context`.
+    /// When it calls it, the target agent gets the task, the context and this agent's
+    /// conversation so far; this agent then stops, and its output ends with the target's
+    /// answer. Only one handoff runs per turn.
+    pub fn add_handoff<A: Agent + 'static>(self, agent: A) -> Self {
+        self.add_handoff_boxed(Box::new(agent))
+    }
+
+    /// [`Self::add_handoff`] for an agent that is already boxed, such as one from a workflow.
+    pub fn add_handoff_boxed(mut self, agent: Box<dyn Agent>) -> Self {
+        let agent: Arc<dyn Agent> = Arc::from(agent);
+        let tool_name = self.unused_tool_name("transfer_to_", &agent.name());
+        let tool = HandoffTool::new(tool_name.clone(), agent.as_ref());
+        let definition = tool.definition();
+        self.register_tool(definition, Arc::new(tool));
+        self.handoffs.insert(tool_name, agent);
+        self
+    }
+
+    /// Adds several handoff targets at once; see [`Self::add_handoff`].
+    pub fn handoffs(self, agents: Vec<Box<dyn Agent>>) -> Self {
+        agents
+            .into_iter()
+            .fold(self, |builder, agent| builder.add_handoff_boxed(agent))
+    }
+
+    fn unused_tool_name(&self, prefix: &str, agent_name: &str) -> String {
+        tool_name_for(prefix, agent_name, |name| {
+            self.tools.iter().any(|tool| tool.name == name)
+        })
+    }
+
     /// Adds tools from an MCP (Model Context Protocol) server via SSE (Server-Sent Events).
     ///
     /// This method connects to an external MCP server over HTTP/SSE and automatically
@@ -516,6 +596,24 @@ where
             );
         }
 
+        // An agent handing off to itself would loop; the name is known only now.
+        let self_handoffs: Vec<String> = self
+            .handoffs
+            .iter()
+            .filter(|(_, target)| target.name() == self.config.name)
+            .map(|(tool_name, _)| tool_name.clone())
+            .collect();
+        for tool_name in self_handoffs {
+            tracing::warn!(
+                "Agent '{}' can't hand off to itself; dropping tool '{}'",
+                self.config.name,
+                tool_name
+            );
+            self.handoffs.remove(&tool_name);
+            self.tools.retain(|t| t.name != tool_name);
+            self.tools_impl.remove(&tool_name);
+        }
+
         let agent = SwarmsAgent {
             model: self.model,
             config: self.config.clone(),
@@ -523,6 +621,7 @@ where
             short_memory: AgentShortMemory::new(),
             tools: self.tools.clone(),
             tools_impl: self.tools_impl,
+            handoffs: self.handoffs,
         };
 
         if agent.config.verbose && log::log_enabled!(log::Level::Info) {
@@ -796,6 +895,9 @@ where
     /// Tool implementation instances (not serialized)
     #[serde(skip)]
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
+    /// Handoff targets, keyed by the name of the tool that transfers to them (not serialized)
+    #[serde(skip)]
+    handoffs: HashMap<String, Arc<dyn Agent>>,
 }
 
 impl<M> SwarmsAgent<M>
@@ -898,6 +1000,7 @@ where
             short_memory: AgentShortMemory::new(),
             tools: vec![],
             tools_impl: DashMap::new(),
+            handoffs: HashMap::new(),
         }
     }
 
@@ -917,9 +1020,10 @@ where
     ///
     /// # Returns
     ///
-    /// Returns a `ChatResponse` which is either:
+    /// Returns a `ChatResponse` which is one of:
     /// - `ChatResponse::Text(String)` - A text response from the LLM
     /// - `ChatResponse::ToolCalls(Vec<ToolCallOutput>)` - Results from tool execution
+    /// - `ChatResponse::TextWithToolCalls { text, tool_calls }` - Both, from the same reply
     ///
     /// # Examples
     ///
@@ -940,6 +1044,12 @@ where
     ///     ChatResponse::Text(text) => println!("Agent: {}", text),
     ///     ChatResponse::ToolCalls(calls) => {
     ///         for call in calls {
+    ///             println!("Tool {}: {}", call.name, call.result);
+    ///         }
+    ///     }
+    ///     ChatResponse::TextWithToolCalls { text, tool_calls } => {
+    ///         println!("Agent: {}", text);
+    ///         for call in tool_calls {
     ///             println!("Tool {}: {}", call.name, call.result);
     ///         }
     ///     }
@@ -1075,9 +1185,15 @@ where
                     }
                 }
 
-                Ok(ChatResponse::ToolCalls(
-                    Arc::clone(&results).lock().await.clone(),
-                ))
+                let tool_calls = Arc::clone(&results).lock().await.clone();
+                // Keep any text the model wrote next to its tool calls (often the answer
+                // itself, sent alongside a task_evaluator call).
+                let text = texts.join("\n");
+                if text.trim().is_empty() {
+                    Ok(ChatResponse::ToolCalls(tool_calls))
+                } else {
+                    Ok(ChatResponse::TextWithToolCalls { text, tool_calls })
+                }
             }
         }
     }
@@ -1166,7 +1282,108 @@ where
         self.system_prompt.as_deref()
     }
 
+    /// A copy of the conversation this agent kept for `task`, if it has run it.
+    ///
+    /// Tool-call turns keep their typed results, so a workflow can read them back without
+    /// parsing the text output:
+    ///
+    /// ```rust,no_run
+    /// # use swarms_rs::{agent::SwarmsAgent, llm::provider::openai::OpenAI};
+    /// # fn example(agent: &SwarmsAgent<OpenAI>) {
+    /// if let Some(conversation) = agent.conversation("What is 2 + 3?") {
+    ///     for output in conversation.tool_outputs() {
+    ///         if let Ok(sum) = output.result_as::<i64>() {
+    ///             println!("{} returned {sum}", output.name);
+    ///         }
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub fn conversation(&self, task: &str) -> Option<AgentConversation> {
+        self.short_memory
+            .0
+            .get(task)
+            .map(|conversation| conversation.clone())
+    }
+
     /// Handle error in attempts
+    /// Run the first handoff among `tool_calls`, if any, and return the target agent's answer.
+    ///
+    /// The target gets the task and context the model wrote, any text it wrote alongside the
+    /// call (`reply_text`), and this agent's conversation so far. The handoff call's result
+    /// is replaced with the target's answer (or the error, in which case this agent keeps
+    /// control), and any further handoff calls in the same turn are marked as not run.
+    async fn run_handoff(
+        &self,
+        task: &str,
+        reply_text: Option<&str>,
+        tool_calls: &mut [ToolCallOutput],
+    ) -> Option<String> {
+        let first = tool_calls
+            .iter()
+            .position(|call| self.handoffs.contains_key(&call.name))?;
+        let chosen = tool_calls[first].name.clone();
+        for call in tool_calls.iter_mut().skip(first + 1) {
+            if self.handoffs.contains_key(&call.name) {
+                call.result = format!(
+                    "Not run: only one handoff runs per turn, and this turn handed off via '{chosen}'"
+                );
+            }
+        }
+
+        let call = &mut tool_calls[first];
+        let args = match serde_json::from_str::<HandoffArgs>(&call.args) {
+            Ok(args) => args,
+            Err(e) => {
+                call.result = format!("Handoff failed: invalid arguments: {e}");
+                return None;
+            },
+        };
+        let target = Arc::clone(&self.handoffs[&chosen]);
+        // Copy the conversation out so no DashMap guard is held across the target's run.
+        let history = self
+            .short_memory
+            .0
+            .get(task)
+            .map(|conversation| conversation.to_string())
+            .unwrap_or_default();
+
+        let mut prompt = format!(
+            "You are taking over a task from the agent '{}'.\n\nTask: {}\n",
+            self.config.name, args.task
+        );
+        if let Some(context) = args.context.filter(|c| !c.trim().is_empty()) {
+            prompt.push_str(&format!(
+                "\nContext from {}: {}\n",
+                self.config.name, context
+            ));
+        }
+        prompt.push_str(&format!("\nConversation so far:\n{history}"));
+        if let Some(text) = reply_text.filter(|t| !t.trim().is_empty()) {
+            prompt.push_str(&format!(
+                "\n{}'s last message: {}\n",
+                self.config.name, text
+            ));
+        }
+
+        match target.run(prompt).await {
+            Ok(output) => {
+                call.result = output.clone();
+                Some(output)
+            },
+            Err(e) => {
+                tracing::error!(
+                    "Agent<{}> handoff to '{}' failed: {}",
+                    self.config.name,
+                    target.name(),
+                    e
+                );
+                call.result = format!("Handoff to '{}' failed: {e}", target.name());
+                None
+            },
+        }
+    }
+
     async fn handle_error_in_attempts(&self, task: &str, error: &AgentError, attempt: u32) {
         let err_msg = format!("Attempt {}, task: {}, failed: {}", attempt + 1, task, error);
         tracing::error!(err_msg);
@@ -1362,19 +1579,32 @@ where
                     };
 
                     // handle ChatResponse
-                    let assistant_memory_content: String;
-                    let mut is_task_evaluator_called = false;
-                    match current_chat_response {
-                        ChatResponse::Text(text) => {
-                            // Pretty print agent output
-                            self.print_agent_output(&text);
-
-                            last_response_text = text.clone();
-                            assistant_memory_content = text;
+                    let (reply_text, tool_calls) = match current_chat_response {
+                        ChatResponse::Text(text) => (Some(text), None),
+                        ChatResponse::ToolCalls(tool_calls) => (None, Some(tool_calls)),
+                        ChatResponse::TextWithToolCalls { text, tool_calls } => {
+                            (Some(text), Some(tool_calls))
                         },
-                        ChatResponse::ToolCalls(tool_calls) => {
+                    };
+                    if let Some(text) = &reply_text {
+                        // Pretty print agent output
+                        self.print_agent_output(text);
+                    }
+                    let mut assistant_tool_calls = None;
+                    let mut is_task_evaluator_called = false;
+                    match tool_calls {
+                        None => {
+                            last_response_text = reply_text.clone().unwrap_or_default();
+                        },
+                        Some(mut tool_calls) => {
+                            // At most one handoff runs per turn; its call's result becomes the
+                            // target agent's answer.
+                            let handoff_output = self
+                                .run_handoff(&task, reply_text.as_deref(), &mut tool_calls)
+                                .await;
+
                             let mut formatted_tool_results = String::new();
-                            for tool_call in tool_calls {
+                            for tool_call in &tool_calls {
                                 // Pretty print tool execution
                                 self.print_tool_execution(
                                     &tool_call.name,
@@ -1382,10 +1612,7 @@ where
                                     &tool_call.result,
                                 );
 
-                                let formatted = format!(
-                                    "[Tool name]: {}\n[Tool args]: {}\n[Tool result]: {}\n\n",
-                                    tool_call.name, tool_call.args, tool_call.result
-                                );
+                                let formatted = tool_call.to_string();
                                 formatted_tool_results.push_str(&formatted);
                                 if tool_call.name == ToolDyn::name(&TaskEvaluator) {
                                     is_task_evaluator_called = true;
@@ -1434,25 +1661,52 @@ where
                                     }
                                 }
                             }
-                            // Memory keeps every tool's result, including those called alongside
-                            // task_evaluator.
-                            assistant_memory_content = formatted_tool_results.clone();
-                            // Update last_response_text if it wasn't set by task_evaluator
-                            if !is_task_evaluator_called {
-                                last_response_text = formatted_tool_results;
+                            let evaluator_incomplete = is_task_evaluator_called && !task_complete;
+                            match &reply_text {
+                                // Text written next to the calls (often the answer itself)
+                                // counts for stop words too.
+                                Some(text) if !evaluator_incomplete => {
+                                    last_response_text =
+                                        format!("{text}\n\n{formatted_tool_results}");
+                                },
+                                // Update last_response_text if it wasn't set by task_evaluator
+                                _ if !is_task_evaluator_called => {
+                                    last_response_text = formatted_tool_results;
+                                },
+                                // An incomplete task_evaluator keeps its context for the next prompt
+                                _ => {},
                             }
+                            if let Some(output) = handoff_output {
+                                // The target agent took over and answered; this agent stops.
+                                task_complete = true;
+                                last_response_text = output;
+                            }
+                            // Memory keeps every tool's typed result, including those called
+                            // alongside task_evaluator.
+                            assistant_tool_calls = Some(tool_calls);
                         },
                     }
 
                     // Update the flag for the *next* iteration based on *this* iteration's call
                     was_prev_call_task_evaluator = is_task_evaluator_called && !task_complete;
 
-                    self.short_memory.add(
-                        &task,
-                        &self.config.name,
-                        Role::Assistant(self.config.name.to_owned()),
-                        assistant_memory_content.clone(), // Add the text or formatted tool calls
-                    );
+                    let role = Role::Assistant(self.config.name.to_owned());
+                    match assistant_tool_calls {
+                        // The model's text comes first, then the tool lines, in one turn.
+                        Some(outputs) => self.short_memory.add_tool_calls(
+                            &task,
+                            &self.config.name,
+                            role,
+                            reply_text,
+                            outputs,
+                        ),
+                        None => self.short_memory.add(
+                            &task,
+                            &self.config.name,
+                            role,
+                            reply_text.unwrap_or_default(),
+                        ),
+                    }
 
                     success = true;
                 }
@@ -1683,6 +1937,9 @@ where
 ///             println!("- Tool '{}' returned: {}", output.name, output.result);
 ///         }
 ///     }
+///     ChatResponse::TextWithToolCalls { text, tool_calls } => {
+///         println!("Agent said '{}' and executed {} tools", text, tool_calls.len());
+///     }
 /// }
 /// # Ok(())
 /// # }
@@ -1701,47 +1958,15 @@ pub enum ChatResponse {
     /// during the chat interaction. The agent may call multiple tools
     /// concurrently or sequentially based on the task requirements.
     ToolCalls(Vec<ToolCallOutput>),
-}
 
-/// Contains the complete information about a single tool execution.
-///
-/// When an agent executes a tool, this structure captures all the relevant
-/// information about the call, including the tool name, arguments passed,
-/// and the result returned. This is useful for debugging, logging, and
-/// understanding the agent's decision-making process.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use swarms_rs::agent::ToolCallOutput;
-///
-/// let tool_output = ToolCallOutput {
-///     name: "calculator".to_string(),
-///     args: r#"{"operation": "add", "a": 5, "b": 3}"#.to_string(),
-///     result: "8".to_string(),
-/// };
-///
-/// println!("Tool {} with args {} returned: {}",
-///          tool_output.name, tool_output.args, tool_output.result);
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallOutput {
-    /// The name of the tool that was executed.
+    /// Text the LLM wrote in the same reply as its tool calls, with the tools' outputs.
     ///
-    /// This corresponds to the tool's identifier as registered with the agent.
-    pub name: String,
-
-    /// The arguments passed to the tool as a JSON string.
-    ///
-    /// The arguments are serialized as JSON to provide a consistent format
-    /// regardless of the tool's specific parameter structure.
-    pub args: String,
-
-    /// The result returned by the tool's execution as a string.
-    ///
-    /// All tool results are converted to strings for consistent handling,
-    /// even if the tool internally works with other data types.
-    pub result: String,
+    /// Models often explain what they're doing, or give their answer, alongside a tool
+    /// call; the text comes first in the reply.
+    TextWithToolCalls {
+        text: String,
+        tool_calls: Vec<ToolCallOutput>,
+    },
 }
 
 #[tool(

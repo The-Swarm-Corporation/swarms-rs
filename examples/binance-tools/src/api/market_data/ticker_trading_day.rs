@@ -56,6 +56,7 @@ pub async fn ticker_trading_day(
 pub struct TickerTradingDayRequest {
     pub symbol: Option<String>,
     /// The maximum number of symbols allowed in a request is 100.
+    #[serde(serialize_with = "super::symbols_as_json")]
     pub symbols: Option<Vec<String>>,
     /// Default: 0 (UTC)
     pub time_zone: Option<String>,

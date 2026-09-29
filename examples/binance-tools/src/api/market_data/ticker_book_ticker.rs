@@ -40,6 +40,7 @@ pub struct TickerBookTickerRequest {
     /// Examples of accepted format for the symbols parameter: ["BTCUSDT","BNBUSDT"]
     /// or
     /// %5B%22BTCUSDT%22,%22BNBUSDT%22%5D
+    #[serde(serialize_with = "super::symbols_as_json")]
     pub symbols: Option<Vec<String>>,
 }
 

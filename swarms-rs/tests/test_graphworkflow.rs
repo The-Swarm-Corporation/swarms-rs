@@ -778,4 +778,79 @@ mod tests {
         // the results should contain the new call count, indicating that the agent was re-executed
         assert_eq!(result3, "response for 'input3' (call #2)");
     }
+
+    /// A mock agent that counts its runs and sleeps before answering `<name>-out`.
+    fn counting_agent(
+        name: &str,
+        delay_ms: u64,
+    ) -> (Box<MockAgent>, Arc<std::sync::atomic::AtomicUsize>) {
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut agent = Box::new(MockAgent::new());
+        agent.expect_name().return_const(name.to_string());
+        agent.expect_id().return_const(name.to_string());
+        agent.expect_description().return_const(String::new());
+        agent.expect_is_response_complete().returning(|_| true);
+        let counter = Arc::clone(&runs);
+        let output = format!("{name}-out");
+        agent.expect_run().returning(move |_| {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let output = output.clone();
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                Ok(output)
+            })
+        });
+        (agent, runs)
+    }
+
+    fn never() -> Flow {
+        Flow {
+            transform: None,
+            condition: Some(Arc::new(|_: &str| false)),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_join_node_runs_once_when_a_sibling_branch_is_skipped() {
+        // A -> E, A -> B (never taken), B -> E, E -> F. Skipping B resolves E's last edge
+        // while A's own edge to E is being processed; E and F must still run once.
+        let mut workflow = DAGWorkflow::new("test", "join once");
+        let (a, _) = counting_agent("A", 10);
+        let (b, b_runs) = counting_agent("B", 10);
+        let (e, e_runs) = counting_agent("E", 50);
+        let (f, f_runs) = counting_agent("F", 50);
+        for agent in [a, b, e, f] {
+            workflow.register_agent(agent);
+        }
+        workflow.connect_agents("A", "E", Flow::default()).unwrap();
+        workflow.connect_agents("A", "B", never()).unwrap();
+        workflow.connect_agents("B", "E", Flow::default()).unwrap();
+        workflow.connect_agents("E", "F", Flow::default()).unwrap();
+
+        let results = workflow.execute_workflow("A", "go").await.unwrap();
+
+        use std::sync::atomic::Ordering::SeqCst;
+        assert_eq!(b_runs.load(SeqCst), 0);
+        assert_eq!(e_runs.load(SeqCst), 1);
+        assert_eq!(f_runs.load(SeqCst), 1);
+        assert_eq!(results.get("F").unwrap().as_ref().unwrap(), "F-out");
+    }
+
+    #[tokio::test]
+    async fn test_join_node_runs_once_with_an_instant_parent() {
+        // A -> E, A -> B, B -> E where B answers without awaiting.
+        let mut workflow = DAGWorkflow::new("test", "join once");
+        let (a, _) = counting_agent("A", 10);
+        let (b, _) = counting_agent("B", 0);
+        let (e, e_runs) = counting_agent("E", 50);
+        for agent in [a, b, e] {
+            workflow.register_agent(agent);
+        }
+        workflow.connect_agents("A", "E", Flow::default()).unwrap();
+        workflow.connect_agents("A", "B", Flow::default()).unwrap();
+        workflow.connect_agents("B", "E", Flow::default()).unwrap();
+
+        workflow.execute_workflow("A", "go").await.unwrap();
+        assert_eq!(e_runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 }

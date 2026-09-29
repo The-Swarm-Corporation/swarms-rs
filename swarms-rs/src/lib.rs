@@ -7,5 +7,9 @@ pub mod prompts;
 pub mod structs;
 pub use swarms_macro;
 
+// Used by the exported logging macros, so callers don't need their own `log` dependency.
+#[doc(hidden)]
+pub use log;
+
 // Re-export commonly used traits and types
 pub use structs::agent::Agent;

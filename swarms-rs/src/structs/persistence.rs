@@ -42,13 +42,15 @@ pub async fn append_to_file(
         fs::create_dir_all(parent).await?;
     }
 
-    fs::OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .append(true)
         .create(true)
         .open(path)
-        .await?
-        .write_all(data.as_ref())
         .await?;
+    file.write_all(data.as_ref()).await?;
+    // tokio finishes file writes in the background; without flushing, a read (or the next
+    // append) right after this call can miss the data.
+    file.flush().await?;
     Ok(())
 }
 

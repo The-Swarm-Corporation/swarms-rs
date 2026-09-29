@@ -2,6 +2,7 @@
 name = "swarms-rs"
 version = "0.2.1"
 edition = "2024"
+rust-version = "1.88"
 description = "The Bleeding-Edge Production-Ready Multi-Agent Orchestration Framework in Rust"
 authors = ["Kye Gomez <kye@swarms.world>"]
 license = "Apache-2.0"
@@ -18,16 +19,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 erased-serde = "0.4"
 futures = "0.3"
-uuid = { version = "1.15", features = ["v4", "serde"] }
-url = "2.5"
-tokio-rustls = "0.26.2"
-tokio = { version = "1", features = ["full"] }
+uuid = { version = "1.15", features = ["v4", "fast-rng", "serde"] }
+# Only what the library uses; `full` would force every tokio component on downstream crates.
+tokio = { version = "1", features = ["rt", "sync", "time", "fs", "io-util", "process"] }
 thiserror = "2"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 twox-hash = "2.1"
 zstd = "0.13.3"
-dotenv = "0.15"
 log = "0.4"
 env_logger = "0.11"
 tabled = "0.20"
@@ -51,13 +49,13 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1"] 
 hyper-tls = "0.6"
 bytes = "1.0"
 http-body-util = "0.1"
-webpki-roots = "0.26"
 
 # macro
 swarms-macro = { version = "0.1.0", path = "../swarms-macro" }
 
 [dev-dependencies]
 anyhow = "1"
+dotenv = "0.15"
 tempfile = "3.19"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "tracing"] }
 tokio-test = "0.4"
@@ -114,6 +112,10 @@ path = "examples/multiple_agent/openrouter_model_panel.rs"
 [[example]]
 name = "openrouter_pipeline"
 path = "examples/multiple_agent/openrouter_pipeline.rs"
+
+[[example]]
+name = "sub_agents_and_handoffs"
+path = "examples/multiple_agent/sub_agents_and_handoffs.rs"
 
 [[example]]
 name = "simple_agent"

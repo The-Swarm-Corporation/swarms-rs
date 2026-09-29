@@ -26,11 +26,11 @@ pub enum BatchExecutionError {
 /// Configuration for batch execution
 #[derive(Debug, Clone)]
 pub struct BatchConfig {
-    /// Maximum number of concurrent tasks per agent
+    /// Maximum number of tasks processed at the same time (each task runs through every agent)
     pub max_concurrent_tasks: Option<usize>,
-    /// Whether to enable automatic CPU optimization
+    /// When no limit is set, use the number of CPU cores (otherwise 4)
     pub auto_cpu_optimization: bool,
-    /// Custom number of worker threads (overrides auto_cpu_optimization if set)
+    /// Concurrency limit used when `max_concurrent_tasks` is not set; no threads are spawned
     pub worker_threads: Option<usize>,
 }
 
@@ -155,6 +155,7 @@ impl AgentBatchExecutor {
             .await;
 
         // Collect every agent's response for a task into one conversation
+        let mut last_error = None;
         for (task, outputs) in task_outputs {
             for (agent_name, output) in outputs {
                 match output {
@@ -169,9 +170,18 @@ impl AgentBatchExecutor {
                             "Agent {} failed to process task '{}': {}",
                             agent_name, task, e
                         );
+                        last_error = Some(e);
                     },
                 }
             }
+        }
+
+        // Tasks where every agent failed are left out; if nothing succeeded at all, that is
+        // an error rather than an empty success.
+        if results.is_empty()
+            && let Some(e) = last_error
+        {
+            return Err(BatchExecutionError::AgentError(e));
         }
 
         info!("Batch execution completed with {} results", results.len());
