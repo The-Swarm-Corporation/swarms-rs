@@ -13,6 +13,9 @@
   <a href="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/The-Swarm-Corporation/swarms-rs?style=for-the-badge&color=success" /></a>
 </p>
 
+<a href="README.md">English</a> | <a href="docs/README.zh.md">中文</a> | <a href="docs/README.ja.md">日本語</a>
+
+
 <p align="left">
   <em>The Enterprise-Grade Production-Ready Multi-Agent Orchestration Framework in Rust</em>
 </p>
@@ -21,11 +24,6 @@
 Swarms Rust is the first-ever enterprise-grade, production-ready multi-agent orchestration framework built in Rust, designed to handle the most demanding tasks with unparalleled speed and efficiency. By leveraging Rust's cutting-edge performance and safety features, `swarms-rs` provides a powerful and scalable solution for orchestrating complex multi-agent systems across various industries.
 
 
-## 🌐 Available Languages
-
-- [English](README.md)
-- [中文](docs/README.zh.md)
-- [日本語](docs/README.ja.md)
 
 ## Key Benefits
 
