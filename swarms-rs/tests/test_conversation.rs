@@ -154,7 +154,7 @@ fn test_agent_conversation_search() {
 
     let results = conversation.search("you");
     // Note: The search looks in the full content including timestamps, so "you" might appear in different contexts
-    assert!(results.len() >= 1); // At least one match should be found
+    assert!(!results.is_empty()); // At least one match should be found
 
     let results = conversation.search("nonexistent");
     assert_eq!(results.len(), 0);

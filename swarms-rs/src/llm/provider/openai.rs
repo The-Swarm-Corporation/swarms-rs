@@ -106,7 +106,8 @@ impl Model for OpenAI {
     fn completion(
         &self,
         request: CompletionRequest,
-    ) -> BoxFuture<Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>> {
+    ) -> BoxFuture<'_, Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>>
+    {
         Box::pin(async move {
             let mut msgs = Vec::new();
 

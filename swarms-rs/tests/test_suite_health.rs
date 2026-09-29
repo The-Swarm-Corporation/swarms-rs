@@ -26,7 +26,7 @@ fn test_suite_discovery() {
         })
         .collect();
 
-    assert!(test_files.len() > 0, "Should have at least one test file");
+    assert!(!test_files.is_empty(), "Should have at least one test file");
     println!("Found {} test files", test_files.len());
 
     // Validate each test file has basic test structure
@@ -64,7 +64,6 @@ fn test_workspace_configuration() {
 #[test]
 fn test_environment_setup() {
     // Check that we're in a test environment
-    assert!(cfg!(test), "Should be running in test mode");
 
     // Check that CARGO_MANIFEST_DIR is set
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -88,5 +87,4 @@ fn test_dependencies_available() {
     println!("Serde available");
 
     // Basic assertion that always passes
-    assert!(true, "Dependencies check completed");
 }

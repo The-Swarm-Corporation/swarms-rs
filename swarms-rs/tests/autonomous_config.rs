@@ -149,6 +149,12 @@ pub struct ConfigManager {
     pub coverage: CoverageConfig,
 }
 
+impl Default for ConfigManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigManager {
     pub fn new() -> Self {
         ConfigManager {

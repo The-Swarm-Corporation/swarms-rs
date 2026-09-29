@@ -92,7 +92,7 @@ pub fn execute_with_direct_threads<T: Send + 'static>(callables: Vec<Callable<T>
     // Spawn a thread for each callable
     let handles: Vec<JoinHandle<T>> = callables
         .into_iter()
-        .map(|callable| thread::spawn(move || callable()))
+        .map(|callable| thread::spawn(callable))
         .collect();
 
     // Collect results
@@ -165,7 +165,7 @@ impl<T> Future for CustomFuture<T> {
 pub async fn execute_with_custom_async<T: Send + 'static>(callables: Vec<Callable<T>>) -> Vec<T> {
     let futures: Vec<CustomFuture<T>> = callables
         .into_iter()
-        .map(|callable| CustomFuture::new(move || callable()))
+        .map(|callable| CustomFuture::new(callable))
         .collect();
 
     let mut results = Vec::with_capacity(futures.len());
@@ -227,10 +227,7 @@ pub async fn execute_with_tokio_channel<T: Send + 'static>(
                 // Try to get a task
                 let task_option = {
                     let mut rx_guard = task_rx_clone.lock().unwrap();
-                    match rx_guard.try_recv() {
-                        Ok(task) => Some(task),
-                        Err(_) => None,
-                    }
+                    rx_guard.try_recv().ok()
                 };
 
                 match task_option {
@@ -288,14 +285,8 @@ pub async fn run_concurrent<T: Send + 'static>(
     num_threads: Option<usize>,
 ) -> Vec<T> {
     match executor {
-        ConcurrencyExecutor::StdThreads => {
-            let results = execute_with_threads(callables, num_threads);
-            results
-        },
-        ConcurrencyExecutor::DirectThreads => {
-            let results = execute_with_direct_threads(callables);
-            results
-        },
+        ConcurrencyExecutor::StdThreads => execute_with_threads(callables, num_threads),
+        ConcurrencyExecutor::DirectThreads => execute_with_direct_threads(callables),
         ConcurrencyExecutor::CustomAsync => execute_with_custom_async(callables).await,
         ConcurrencyExecutor::Tokio => execute_with_tokio(callables, num_threads).await,
         ConcurrencyExecutor::TokioChannel => {

@@ -51,7 +51,6 @@ fn test_coverage_analysis() {
     println!("Coverage percentage: {:.1}%", coverage_percentage);
 
     // This test always passes - it's just for analysis
-    assert!(true, "Coverage analysis completed successfully");
 }
 
 /// Test that validates we can identify integration test gaps
@@ -83,8 +82,6 @@ fn test_integration_coverage_analysis() {
             );
         }
     }
-
-    assert!(true, "Integration test analysis completed");
 }
 
 /// Analyzes test quality and patterns
@@ -140,8 +137,6 @@ fn test_quality_analysis() {
     println!("Async test coverage: {:.1}%", async_coverage);
     println!("Setup/teardown coverage: {:.1}%", setup_coverage);
     println!("Edge case coverage: {:.1}%", edge_case_coverage);
-
-    assert!(true, "Test quality analysis completed");
 }
 
 /// Test that identifies potential test gaps in error handling
@@ -191,8 +186,6 @@ fn test_error_handling_coverage() {
             }
         }
     }
-
-    assert!(true, "Error handling analysis completed");
 }
 
 // Helper functions (safe utilities)
@@ -202,7 +195,7 @@ fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
                 files.push(path);
             } else if path.is_dir() && !path.file_name().unwrap().to_str().unwrap().starts_with('.')
             {
@@ -219,8 +212,7 @@ fn extract_module_name(file_path: &Path, base_dir: &Path) -> String {
         .unwrap_or(file_path)
         .with_extension("")
         .to_string_lossy()
-        .replace('/', "::")
-        .replace('\\', "::")
+        .replace(['/', '\\'], "::")
 }
 
 fn has_module_tests(module_name: &str, test_files: &[std::path::PathBuf]) -> bool {
@@ -248,10 +240,11 @@ fn check_integration_test_exists(component_a: &str, component_b: &str) -> bool {
     let test_files = find_rust_files(&tests_dir);
 
     for test_file in &test_files {
-        if let Ok(content) = std::fs::read_to_string(test_file) {
-            if content.contains(component_a) && content.contains(component_b) {
-                return true;
-            }
+        if let Ok(content) = std::fs::read_to_string(test_file)
+            && content.contains(component_a)
+            && content.contains(component_b)
+        {
+            return true;
         }
     }
     false

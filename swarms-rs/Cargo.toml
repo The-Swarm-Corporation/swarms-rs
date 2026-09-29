@@ -28,7 +28,9 @@ twox-hash = "2.1"
 zstd = "0.13.3"
 log = "0.4"
 env_logger = "0.11"
-tabled = "0.20"
+# Only the table builder is used; the default `derive` feature pulls in proc-macro-error2,
+# which future Rust versions will reject.
+tabled = { version = "0.20", default-features = false, features = ["std"] }
 petgraph = { version = "0.7", default-features = false, features = [
     "stable_graph",
 ] }

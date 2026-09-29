@@ -160,16 +160,17 @@ fn discover_scaffolding_opportunities(dir: &Path, report: &mut HashMap<String, u
 
             if path.is_dir() && !path.file_name().unwrap().to_str().unwrap().starts_with('.') {
                 discover_scaffolding_opportunities(&path, report);
-            } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let module_name = path.file_stem().unwrap().to_str().unwrap().to_string();
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let module_name = path.file_stem().unwrap().to_str().unwrap().to_string();
 
-                    // Count integration opportunities
-                    let opportunities = count_integration_opportunities(&content);
+                // Count integration opportunities
+                let opportunities = count_integration_opportunities(&content);
 
-                    if opportunities > 0 {
-                        report.insert(module_name, opportunities);
-                    }
+                if opportunities > 0 {
+                    report.insert(module_name, opportunities);
                 }
             }
         }
@@ -183,23 +184,24 @@ fn find_api_patterns(dir: &Path, patterns: &mut Vec<String>) {
 
             if path.is_dir() {
                 find_api_patterns(&path, patterns);
-            } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    // Look for API-like patterns
-                    if content.contains("async fn") && content.contains("Result<") {
-                        let filename = path.file_name().unwrap().to_str().unwrap();
-                        patterns.push(format!("Async API pattern in {}", filename));
-                    }
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                // Look for API-like patterns
+                if content.contains("async fn") && content.contains("Result<") {
+                    let filename = path.file_name().unwrap().to_str().unwrap();
+                    patterns.push(format!("Async API pattern in {}", filename));
+                }
 
-                    if content.contains("pub fn") && content.contains("Error") {
-                        let filename = path.file_name().unwrap().to_str().unwrap();
-                        patterns.push(format!("Public error-handling API in {}", filename));
-                    }
+                if content.contains("pub fn") && content.contains("Error") {
+                    let filename = path.file_name().unwrap().to_str().unwrap();
+                    patterns.push(format!("Public error-handling API in {}", filename));
+                }
 
-                    if content.contains("trait") && content.contains("impl") {
-                        let filename = path.file_name().unwrap().to_str().unwrap();
-                        patterns.push(format!("Trait implementation in {}", filename));
-                    }
+                if content.contains("trait") && content.contains("impl") {
+                    let filename = path.file_name().unwrap().to_str().unwrap();
+                    patterns.push(format!("Trait implementation in {}", filename));
                 }
             }
         }
@@ -213,28 +215,29 @@ fn analyze_workflow_patterns(dir: &Path, patterns: &mut HashMap<String, usize>) 
 
             if path.is_dir() {
                 analyze_workflow_patterns(&path, patterns);
-            } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    // Count workflow-related patterns
-                    if content.contains("workflow") || content.contains("Workflow") {
-                        *patterns.entry("Workflow".to_string()).or_insert(0) += 1;
-                    }
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                // Count workflow-related patterns
+                if content.contains("workflow") || content.contains("Workflow") {
+                    *patterns.entry("Workflow".to_string()).or_insert(0) += 1;
+                }
 
-                    if content.contains("agent") || content.contains("Agent") {
-                        *patterns.entry("Agent".to_string()).or_insert(0) += 1;
-                    }
+                if content.contains("agent") || content.contains("Agent") {
+                    *patterns.entry("Agent".to_string()).or_insert(0) += 1;
+                }
 
-                    if content.contains("swarm") || content.contains("Swarm") {
-                        *patterns.entry("Swarm".to_string()).or_insert(0) += 1;
-                    }
+                if content.contains("swarm") || content.contains("Swarm") {
+                    *patterns.entry("Swarm".to_string()).or_insert(0) += 1;
+                }
 
-                    if content.contains("concurrent") || content.contains("Concurrent") {
-                        *patterns.entry("Concurrent".to_string()).or_insert(0) += 1;
-                    }
+                if content.contains("concurrent") || content.contains("Concurrent") {
+                    *patterns.entry("Concurrent".to_string()).or_insert(0) += 1;
+                }
 
-                    if content.contains("execute") || content.contains("run") {
-                        *patterns.entry("Execution".to_string()).or_insert(0) += 1;
-                    }
+                if content.contains("execute") || content.contains("run") {
+                    *patterns.entry("Execution".to_string()).or_insert(0) += 1;
                 }
             }
         }
@@ -248,38 +251,39 @@ fn analyze_error_patterns(dir: &Path, patterns: &mut HashMap<String, Vec<String>
 
             if path.is_dir() {
                 analyze_error_patterns(&path, patterns);
-            } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let filename = path.file_name().unwrap().to_str().unwrap().to_string();
 
-                    // Track different error patterns
-                    if content.contains("Result<") && content.contains("Error") {
-                        patterns
-                            .entry("Result Error".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                // Track different error patterns
+                if content.contains("Result<") && content.contains("Error") {
+                    patterns
+                        .entry("Result Error".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("panic!") {
-                        patterns
-                            .entry("Panic".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                if content.contains("panic!") {
+                    patterns
+                        .entry("Panic".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("unwrap()") || content.contains("expect(") {
-                        patterns
-                            .entry("Unwrap/Expect".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                if content.contains("unwrap()") || content.contains("expect(") {
+                    patterns
+                        .entry("Unwrap/Expect".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("match") && content.contains("Err") {
-                        patterns
-                            .entry("Match Error".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename);
-                    }
+                if content.contains("match") && content.contains("Err") {
+                    patterns
+                        .entry("Match Error".to_string())
+                        .or_default()
+                        .push(filename);
                 }
             }
         }

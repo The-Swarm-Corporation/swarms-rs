@@ -6,7 +6,6 @@ use uuid::Uuid;
 fn test_metadata_schema_map_creation() {
     let _map = MetadataSchemaMap::default();
     // Map created successfully
-    assert!(true);
 }
 
 #[test]
@@ -23,7 +22,6 @@ fn test_metadata_schema_map_add() {
 
     map.add("task1", schema);
     // Add completed successfully
-    assert!(true);
 }
 
 #[test]
@@ -42,7 +40,6 @@ fn test_metadata_schema_map_multiple_tasks() {
     }
 
     // All tasks added successfully
-    assert!(true);
 }
 
 #[test]
@@ -281,7 +278,6 @@ fn test_metadata_schema_map_update_existing_task() {
 
     map.add("task1", schema2);
     // Update completed successfully
-    assert!(true);
 }
 
 #[test]
@@ -332,7 +328,6 @@ fn test_metadata_schema_map_clone() {
 
     let _map2 = map1.clone();
     // Clone completed successfully
-    assert!(true);
 }
 
 #[test]

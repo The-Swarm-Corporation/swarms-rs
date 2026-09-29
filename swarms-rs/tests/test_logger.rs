@@ -29,7 +29,6 @@ mod tests {
         log::error!("Test error message");
 
         // Verify that logging doesn't panic
-        assert!(true); // Basic assertion to ensure test passes
     }
 
     #[test]
@@ -72,7 +71,6 @@ mod tests {
         );
 
         // Verify that all macros executed without panicking
-        assert!(true);
     }
 
     #[test]
@@ -85,7 +83,5 @@ mod tests {
         log::info!("Info message");
         log::warn!("Warning message");
         log::error!("Error message");
-
-        assert!(true);
     }
 }

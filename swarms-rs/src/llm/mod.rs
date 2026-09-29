@@ -12,7 +12,7 @@ pub trait Model {
     fn completion(
         &self,
         request: CompletionRequest,
-    ) -> BoxFuture<Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>>;
+    ) -> BoxFuture<'_, Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>>;
 }
 
 // Errors

@@ -25,7 +25,7 @@ impl MockAgent {
 }
 
 impl Agent for MockAgent {
-    fn run(&self, _task: String) -> BoxFuture<Result<String, AgentError>> {
+    fn run(&self, _task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         let response = self.response.clone();
         Box::pin(async move { Ok(response) })
     }
@@ -33,19 +33,19 @@ impl Agent for MockAgent {
     fn run_multiple_tasks(
         &mut self,
         _tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>> {
         Box::pin(async { Ok(vec![]) })
     }
 
-    fn plan(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn plan(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn save_task_state(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn save_task_state(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -126,24 +126,30 @@ fn test_swarm_router_config_default() {
 
 #[test]
 fn test_swarm_router_config_custom_name() {
-    let mut config = SwarmRouterConfig::default();
-    config.name = "custom-router".to_string();
+    let config = SwarmRouterConfig {
+        name: "custom-router".to_string(),
+        ..Default::default()
+    };
 
     assert_eq!(config.name, "custom-router");
 }
 
 #[test]
 fn test_swarm_router_config_custom_description() {
-    let mut config = SwarmRouterConfig::default();
-    config.description = "Custom description".to_string();
+    let config = SwarmRouterConfig {
+        description: "Custom description".to_string(),
+        ..Default::default()
+    };
 
     assert_eq!(config.description, "Custom description");
 }
 
 #[test]
 fn test_swarm_router_config_with_rules() {
-    let mut config = SwarmRouterConfig::default();
-    config.rules = Some("Always be helpful and accurate".to_string());
+    let config = SwarmRouterConfig {
+        rules: Some("Always be helpful and accurate".to_string()),
+        ..Default::default()
+    };
 
     assert!(config.rules.is_some());
     assert_eq!(config.rules.unwrap(), "Always be helpful and accurate");
@@ -151,16 +157,20 @@ fn test_swarm_router_config_with_rules() {
 
 #[test]
 fn test_swarm_router_config_disable_multi_agent_collab() {
-    let mut config = SwarmRouterConfig::default();
-    config.multi_agent_collab_prompt = false;
+    let config = SwarmRouterConfig {
+        multi_agent_collab_prompt: false,
+        ..Default::default()
+    };
 
     assert!(!config.multi_agent_collab_prompt);
 }
 
 #[test]
 fn test_swarm_router_config_with_flow() {
-    let mut config = SwarmRouterConfig::default();
-    config.flow = Some("agent1 -> agent2 -> agent3".to_string());
+    let config = SwarmRouterConfig {
+        flow: Some("agent1 -> agent2 -> agent3".to_string()),
+        ..Default::default()
+    };
 
     assert!(config.flow.is_some());
     assert_eq!(config.flow.unwrap(), "agent1 -> agent2 -> agent3");
@@ -168,8 +178,10 @@ fn test_swarm_router_config_with_flow() {
 
 #[test]
 fn test_swarm_router_config_with_max_loops() {
-    let mut config = SwarmRouterConfig::default();
-    config.max_loops = Some(5);
+    let config = SwarmRouterConfig {
+        max_loops: Some(5),
+        ..Default::default()
+    };
 
     assert!(config.max_loops.is_some());
     assert_eq!(config.max_loops.unwrap(), 5);
@@ -226,8 +238,10 @@ fn test_swarm_router_error_debug() {
 
 #[test]
 fn test_swarm_router_config_empty_rules() {
-    let mut config = SwarmRouterConfig::default();
-    config.rules = Some("".to_string());
+    let config = SwarmRouterConfig {
+        rules: Some("".to_string()),
+        ..Default::default()
+    };
 
     assert!(config.rules.is_some());
     assert_eq!(config.rules.unwrap(), "");
@@ -244,9 +258,11 @@ fn test_swarm_router_config_long_description() {
 
 #[test]
 fn test_swarm_router_config_special_characters() {
-    let mut config = SwarmRouterConfig::default();
-    config.name = "router-🚀".to_string();
-    config.description = "Description with 你好世界".to_string();
+    let config = SwarmRouterConfig {
+        name: "router-🚀".to_string(),
+        description: "Description with 你好世界".to_string(),
+        ..Default::default()
+    };
 
     assert_eq!(config.name, "router-🚀");
     assert_eq!(config.description, "Description with 你好世界");
@@ -254,8 +270,10 @@ fn test_swarm_router_config_special_characters() {
 
 #[test]
 fn test_swarm_router_config_complex_flow() {
-    let mut config = SwarmRouterConfig::default();
-    config.flow = Some("agent1 -> agent2, agent3 -> H -> agent4".to_string());
+    let config = SwarmRouterConfig {
+        flow: Some("agent1 -> agent2, agent3 -> H -> agent4".to_string()),
+        ..Default::default()
+    };
 
     assert!(config.flow.is_some());
     assert!(config.flow.unwrap().contains("->"));
@@ -263,16 +281,20 @@ fn test_swarm_router_config_complex_flow() {
 
 #[test]
 fn test_swarm_router_config_zero_max_loops() {
-    let mut config = SwarmRouterConfig::default();
-    config.max_loops = Some(0);
+    let config = SwarmRouterConfig {
+        max_loops: Some(0),
+        ..Default::default()
+    };
 
     assert_eq!(config.max_loops.unwrap(), 0);
 }
 
 #[test]
 fn test_swarm_router_config_large_max_loops() {
-    let mut config = SwarmRouterConfig::default();
-    config.max_loops = Some(1000);
+    let config = SwarmRouterConfig {
+        max_loops: Some(1000),
+        ..Default::default()
+    };
 
     assert_eq!(config.max_loops.unwrap(), 1000);
 }
@@ -288,13 +310,15 @@ fn test_swarm_router_config_multiline_rules() {
 
 #[test]
 fn test_swarm_router_config_with_all_options() {
-    let mut config = SwarmRouterConfig::default();
-    config.name = "full-router".to_string();
-    config.description = "Fully configured router".to_string();
-    config.rules = Some("Custom rules".to_string());
-    config.multi_agent_collab_prompt = false;
-    config.flow = Some("a -> b -> c".to_string());
-    config.max_loops = Some(10);
+    let config = SwarmRouterConfig {
+        name: "full-router".to_string(),
+        description: "Fully configured router".to_string(),
+        rules: Some("Custom rules".to_string()),
+        multi_agent_collab_prompt: false,
+        flow: Some("a -> b -> c".to_string()),
+        max_loops: Some(10),
+        ..Default::default()
+    };
 
     assert_eq!(config.name, "full-router");
     assert_eq!(config.description, "Fully configured router");
@@ -315,16 +339,20 @@ fn test_swarm_type_deserialization_case_sensitive() {
 
 #[test]
 fn test_swarm_router_config_empty_name() {
-    let mut config = SwarmRouterConfig::default();
-    config.name = "".to_string();
+    let config = SwarmRouterConfig {
+        name: "".to_string(),
+        ..Default::default()
+    };
 
     assert_eq!(config.name, "");
 }
 
 #[test]
 fn test_swarm_router_config_empty_description() {
-    let mut config = SwarmRouterConfig::default();
-    config.description = "".to_string();
+    let config = SwarmRouterConfig {
+        description: "".to_string(),
+        ..Default::default()
+    };
 
     assert_eq!(config.description, "");
 }
@@ -366,6 +394,8 @@ fn test_swarm_type_all_variants() {
 }
 
 #[test]
+// This test is about changing a config after it was created.
+#[allow(clippy::field_reassign_with_default)]
 fn test_swarm_router_config_modification_chain() {
     let mut config = SwarmRouterConfig::default();
 
@@ -409,13 +439,12 @@ fn test_swarm_router_config_default_swarm_type() {
     let config = SwarmRouterConfig::default();
 
     // Default should be SequentialWorkflow
-    match config.swarm_type {
-        SwarmType::SequentialWorkflow => assert!(true),
-        _ => panic!("Expected SequentialWorkflow as default"),
-    }
+    assert!(matches!(config.swarm_type, SwarmType::SequentialWorkflow));
 }
 
 #[test]
+// This test is about changing a config after it was created.
+#[allow(clippy::field_reassign_with_default)]
 fn test_swarm_router_config_change_swarm_type() {
     let mut config = SwarmRouterConfig::default();
 

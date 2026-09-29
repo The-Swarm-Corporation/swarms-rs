@@ -44,9 +44,10 @@ pub enum AgentRearrangeError {
 }
 
 /// Output format options for agent rearrange results
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum OutputType {
     /// Return all agent responses concatenated
+    #[default]
     All,
     /// Return only the final agent's response
     Final,
@@ -54,12 +55,6 @@ pub enum OutputType {
     List,
     /// Return a dictionary mapping agent names to responses
     Dict,
-}
-
-impl Default for OutputType {
-    fn default() -> Self {
-        OutputType::All
-    }
 }
 
 /// Configuration builder for AgentRearrange

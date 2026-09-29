@@ -476,16 +476,16 @@ impl DAGWorkflow {
 
         // Add edges
         for edge in self.workflow.edge_indices() {
-            if let Some((source, target)) = self.workflow.edge_endpoints(edge) {
-                if let (Some(source_node), Some(target_node)) = (
+            if let Some((source, target)) = self.workflow.edge_endpoints(edge)
+                && let (Some(source_node), Some(target_node)) = (
                     self.workflow.node_weight(source),
                     self.workflow.node_weight(target),
-                ) {
-                    dot.push_str(&format!(
-                        "    \"{}\" -> \"{}\";\n",
-                        source_node.name, target_node.name
-                    ));
-                }
+                )
+            {
+                dot.push_str(&format!(
+                    "    \"{}\" -> \"{}\";\n",
+                    source_node.name, target_node.name
+                ));
             }
         }
 

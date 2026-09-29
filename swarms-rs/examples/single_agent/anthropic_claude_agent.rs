@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run("Hello! Please respond with a brief greeting and confirm you're Claude.".to_string())
         .await?;
 
-    println!("Result: {}", result.to_string());
+    println!("Result: {}", result);
 
     Ok(())
 }

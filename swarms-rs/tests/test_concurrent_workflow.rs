@@ -108,14 +108,12 @@ fn test_concurrent_workflow_builder_creation() {
 
     // Can't directly access private fields, but we can test the builder pattern works
     // The actual functionality will be tested in integration tests
-    assert!(true); // Builder pattern compilation test
 }
 
 #[test]
 fn test_concurrent_workflow_builder_defaults() {
     let _workflow = ConcurrentWorkflow::builder().build();
     // Test that the builder creates a workflow with defaults
-    assert!(true); // Default values compilation test
 }
 
 #[test]
@@ -130,8 +128,6 @@ fn test_concurrent_workflow_builder_with_agents_vector() {
         .name("BatchWorkflow")
         .agents(agents)
         .build();
-
-    assert!(true); // Batch agents compilation test
 }
 
 #[test]
@@ -146,8 +142,6 @@ fn test_concurrent_workflow_builder_chaining() {
         .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
         .add_agent(Box::new(MockAgent::new("Agent2", "Response2")))
         .build();
-
-    assert!(true); // Chaining compilation test
 }
 
 #[tokio::test]
@@ -316,8 +310,6 @@ fn test_concurrent_workflow_builder_multiple_add_agent_calls() {
         .add_agent(Box::new(MockAgent::new("Agent3", "Response3")))
         .add_agent(Box::new(MockAgent::new("Agent4", "Response4")))
         .build();
-
-    assert!(true); // Multiple add_agent calls compilation test
 }
 
 #[tokio::test]
@@ -355,8 +347,6 @@ fn test_concurrent_workflow_builder_empty_name() {
         .name("")
         .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
         .build();
-
-    assert!(true); // Empty name compilation test
 }
 
 #[test]
@@ -366,6 +356,4 @@ fn test_concurrent_workflow_builder_empty_description() {
         .description("")
         .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
         .build();
-
-    assert!(true); // Empty description compilation test
 }

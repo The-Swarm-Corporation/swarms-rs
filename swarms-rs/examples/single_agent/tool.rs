@@ -176,7 +176,7 @@ fn create_user_profile(profile: UserProfile) -> Result<String, CalcError> {
 ///
 /// The struct must implement `serde::Serialize` and `serde::Deserialize` traits.
 ///
-/// The struct must also implement `schemars::JsonSchema` trait. `schemars` must newer than 1.0.0.
+/// The struct must also implement `schemars::JsonSchema` trait, from `schemars` 0.8 (the version swarms-rs uses).
 ///
 /// Both #[doc = "..."] and `///` comments are supported, the contents of both will be a description of the parameter.
 /// If #[doc] or `///` is above the struct, it will be the description of the struct.
@@ -196,6 +196,23 @@ struct ThirdField {
     first_field: String,
     /// The second field
     second_field: String,
+}
+
+/// A tool taking the struct above; its field docs become the parameter descriptions.
+#[tool(description = "Summarize an example struct parameter")]
+fn summarize_example(
+    example: ExampleStructParameterToHaveADescription,
+) -> Result<String, CalcError> {
+    Ok(format!(
+        "{} / {} with {} third fields (first: {:?})",
+        example.first_field,
+        example.second_field,
+        example.third_field.len(),
+        example
+            .third_field
+            .first()
+            .map(|f| (&f.first_field, &f.second_field))
+    ))
 }
 
 #[derive(Debug, Error)]

@@ -916,7 +916,7 @@ where
             table.with(Style::rounded());
             table.with(Modify::new(Rows::first()).with(Alignment::center()));
 
-            println!("{}", table.to_string());
+            println!("{}", table);
         } else {
             println!("🤖 Agent: {}", content);
         }
@@ -938,7 +938,7 @@ where
             table.with(Style::rounded());
             table.with(Modify::new(Rows::first()).with(Alignment::center()));
 
-            println!("{}", table.to_string());
+            println!("{}", table);
         } else {
             println!("🔧 Tool {} executed with args: {}", tool_name, args);
             println!("✅ Result: {}", result);
@@ -963,7 +963,7 @@ where
             table.with(Style::rounded());
             table.with(Modify::new(Rows::first()).with(Alignment::center()));
 
-            println!("{}", table.to_string());
+            println!("{}", table);
         } else {
             println!("🎯 Task '{}' completed!", task);
             println!("📋 Result: {}", result);
@@ -1222,11 +1222,10 @@ where
             max_tokens: Some(self.config.max_tokens),
         };
 
-        let response = self.model.completion(request).await.map_err(|e| {
+        let response = self.model.completion(request).await.inspect_err(|e| {
             if self.config.verbose {
-                log_error_ctx!(&self.config.name, &self.config.id, &e, "LLM completion");
+                log_error_ctx!(&self.config.name, &self.config.id, e, "LLM completion");
             }
-            e
         })?;
 
         // Replies can be split across several text blocks; no tools are offered here, so
@@ -1243,7 +1242,8 @@ where
             return Err(AgentError::NoChoiceFound);
         }
         let text = texts.join("\n");
-        let result = {
+
+        {
             {
                 let duration = start_time.elapsed().as_millis() as u64;
                 if self.config.verbose {
@@ -1260,9 +1260,7 @@ where
                 }
                 Ok(text)
             }
-        };
-
-        result
+        }
     }
 
     pub fn tool(mut self, tool: impl ToolDyn + 'static) -> Self {
@@ -1406,7 +1404,7 @@ where
     M: llm::Model + Clone + Send + Sync + 'static,
     M::RawCompletionResponse: Clone + Send + Sync,
 {
-    fn run(&self, task: String) -> BoxFuture<Result<String, AgentError>> {
+    fn run(&self, task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         Box::pin(async move {
             let start_time = std::time::Instant::now();
 
@@ -1799,7 +1797,7 @@ where
     fn run_multiple_tasks(
         &mut self,
         tasks: Vec<String>,
-    ) -> BoxFuture<Result<Vec<String>, AgentError>> {
+    ) -> BoxFuture<'_, Result<Vec<String>, AgentError>> {
         let agent_name = self.name();
         let mut results = Vec::with_capacity(tasks.len());
 
@@ -1834,7 +1832,7 @@ where
         })
     }
 
-    fn plan(&self, task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn plan(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         Box::pin(async move {
             if let Some(planning_prompt) = &self.config.planning_prompt {
                 let planning_prompt = format!("{} {}", planning_prompt, task);
@@ -1852,11 +1850,11 @@ where
         })
     }
 
-    fn query_long_term_memory(&self, _task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn query_long_term_memory(&self, _task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         unimplemented!("query_long_term_memory not implemented")
     }
 
-    fn save_task_state(&self, task: String) -> BoxFuture<Result<(), AgentError>> {
+    fn save_task_state(&self, task: String) -> BoxFuture<'_, Result<(), AgentError>> {
         let mut hasher = XxHash64::default();
         task.hash(&mut hasher);
         let task_hash = hasher.finish();

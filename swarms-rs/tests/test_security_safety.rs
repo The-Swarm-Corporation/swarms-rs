@@ -126,17 +126,17 @@ fn test_dependency_vulnerability_scan() {
     let mut dependency_issues = Vec::new();
 
     // Analyze Cargo.toml for suspicious dependencies
-    if cargo_toml_path.exists() {
-        if let Ok(content) = fs::read_to_string(&cargo_toml_path) {
-            analyze_cargo_dependencies(&content, &mut dependency_issues);
-        }
+    if cargo_toml_path.exists()
+        && let Ok(content) = fs::read_to_string(&cargo_toml_path)
+    {
+        analyze_cargo_dependencies(&content, &mut dependency_issues);
     }
 
     // Analyze Cargo.lock for version vulnerabilities
-    if cargo_lock_path.exists() {
-        if let Ok(content) = fs::read_to_string(&cargo_lock_path) {
-            analyze_locked_dependencies(&content, &mut dependency_issues);
-        }
+    if cargo_lock_path.exists()
+        && let Ok(content) = fs::read_to_string(&cargo_lock_path)
+    {
+        analyze_locked_dependencies(&content, &mut dependency_issues);
     }
 
     println!(" Dependency Security Analysis:");
@@ -214,14 +214,15 @@ fn scan_for_malicious_patterns(dir: &Path, report: &mut HashMap<String, Vec<Stri
 
             if path.is_dir() && !path.file_name().unwrap().to_str().unwrap().starts_with('.') {
                 scan_for_malicious_patterns(&path, report);
-            } else if path.is_file() && is_code_file(&path) {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let filename = path.file_name().unwrap().to_str().unwrap().to_string();
-                    let threats = detect_malicious_patterns(&content);
+            } else if path.is_file()
+                && is_code_file(&path)
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+                let threats = detect_malicious_patterns(&content);
 
-                    if !threats.is_empty() {
-                        report.insert(filename, threats);
-                    }
+                if !threats.is_empty() {
+                    report.insert(filename, threats);
                 }
             }
         }
@@ -296,45 +297,46 @@ fn analyze_unsafe_code_patterns(dir: &Path, patterns: &mut HashMap<String, Vec<S
 
             if path.is_dir() {
                 analyze_unsafe_code_patterns(&path, patterns);
-            } else if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+            } else if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "rs")
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                let filename = path.file_name().unwrap().to_str().unwrap().to_string();
 
-                    // Track unsafe patterns
-                    if content.contains("unsafe {") || content.contains("unsafe fn") {
-                        patterns
-                            .entry("Unsafe Blocks".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                // Track unsafe patterns
+                if content.contains("unsafe {") || content.contains("unsafe fn") {
+                    patterns
+                        .entry("Unsafe Blocks".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("*const") || content.contains("*mut") {
-                        patterns
-                            .entry("Raw Pointers".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                if content.contains("*const") || content.contains("*mut") {
+                    patterns
+                        .entry("Raw Pointers".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("transmute") {
-                        patterns
-                            .entry("Memory Transmutation".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                if content.contains("transmute") {
+                    patterns
+                        .entry("Memory Transmutation".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("from_raw") || content.contains("into_raw") {
-                        patterns
-                            .entry("Raw Memory Access".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename.clone());
-                    }
+                if content.contains("from_raw") || content.contains("into_raw") {
+                    patterns
+                        .entry("Raw Memory Access".to_string())
+                        .or_default()
+                        .push(filename.clone());
+                }
 
-                    if content.contains("libc::") {
-                        patterns
-                            .entry("C Library Calls".to_string())
-                            .or_insert_with(Vec::new)
-                            .push(filename);
-                    }
+                if content.contains("libc::") {
+                    patterns
+                        .entry("C Library Calls".to_string())
+                        .or_default()
+                        .push(filename);
                 }
             }
         }
@@ -417,10 +419,11 @@ fn scan_directory_for_secrets(dir: &Path, leaks: &mut Vec<String>) {
 
             if path.is_dir() && !should_skip_directory(&path) {
                 scan_directory_for_secrets(&path, leaks);
-            } else if path.is_file() && is_scannable_file(&path) {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    scan_content_for_secrets(&content, &path, leaks);
-                }
+            } else if path.is_file()
+                && is_scannable_file(&path)
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                scan_content_for_secrets(&content, &path, leaks);
             }
         }
     }
@@ -456,16 +459,15 @@ fn scan_content_for_secrets(content: &str, file_path: &Path, leaks: &mut Vec<Str
                     if !line.trim().starts_with("//")
                         && !line.trim().starts_with("#")
                         && !line.trim().starts_with("*")
+                        && (line.contains("=") || line.contains(":"))
                     {
-                        if line.contains("=") || line.contains(":") {
-                            // Look for quoted strings that might be secrets
-                            if line.contains("\"") && line.matches("\"").count() >= 2 {
-                                leaks.push(format!(
-                                    "{}: Potential {} assignment in file {}",
-                                    desc, desc, filename
-                                ));
-                                break; // Only report once per file per pattern
-                            }
+                        // Look for quoted strings that might be secrets
+                        if line.contains("\"") && line.matches("\"").count() >= 2 {
+                            leaks.push(format!(
+                                "{}: Potential {} assignment in file {}",
+                                desc, desc, filename
+                            ));
+                            break; // Only report once per file per pattern
                         }
                     }
                 }
