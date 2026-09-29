@@ -1,12 +1,10 @@
+<h1 align="left">Swarms Rust</h1>
+
 <div align="left">
   <a href="https://swarms.ai">
     <img src="https://raw.githubusercontent.com/The-Swarm-Corporation/swarms-rs/main/logo.svg" style="margin: 15px; max-width: 500px" width="80%" alt="Logo">
   </a>
 </div>
-
-<p align="left">
-  <em>The Enterprise-Grade Production-Ready Multi-Agent Orchestration Framework in Rust</em>
-</p>
 
 <p align="left">
   <a href="https://crates.io/crates/swarms-rs"><img alt="Crates.io" src="https://img.shields.io/crates/v/swarms-rs?style=for-the-badge&logo=rust&color=orange" /></a>
@@ -15,8 +13,10 @@
   <a href="https://github.com/The-Swarm-Corporation/swarms-rs/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/The-Swarm-Corporation/swarms-rs?style=for-the-badge&color=success" /></a>
 </p>
 
+<p align="left">
+  <em>The Enterprise-Grade Production-Ready Multi-Agent Orchestration Framework in Rust</em>
+</p>
 
-## Overview
 
 `swarms-rs` is the first-ever enterprise-grade, production-ready multi-agent orchestration framework built in Rust, designed to handle the most demanding tasks with unparalleled speed and efficiency. By leveraging Rust's cutting-edge performance and safety features, `swarms-rs` provides a powerful and scalable solution for orchestrating complex multi-agent systems across various industries.
 
