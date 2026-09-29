@@ -1,6 +1,6 @@
 [package]
 name = "swarms-rs"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "The Bleeding-Edge Production-Ready Multi-Agent Orchestration Framework in Rust"
@@ -53,7 +53,7 @@ bytes = "1.0"
 http-body-util = "0.1"
 
 # macro
-swarms-macro = { version = "0.1.0", path = "../swarms-macro" }
+swarms-macro = { version = "0.2.0", path = "../swarms-macro" }
 
 [dev-dependencies]
 anyhow = "1"
