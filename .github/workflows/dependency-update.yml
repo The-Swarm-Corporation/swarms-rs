@@ -84,7 +84,7 @@ jobs:
         echo '```' >> dependency_report.md
 
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v6
+      uses: peter-evans/create-pull-request@v7
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: |
@@ -226,7 +226,7 @@ jobs:
           }
 
     - name: Create Pull Request for Action Updates
-      uses: peter-evans/create-pull-request@v6
+      uses: peter-evans/create-pull-request@v7
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: "chore: update GitHub Actions to latest versions"
