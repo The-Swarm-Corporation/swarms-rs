@@ -7,6 +7,30 @@ use swarms_rs::structs::{
     concurrent_workflow::{ConcurrentWorkflow, ConcurrentWorkflowError},
 };
 use tempfile::tempdir;
+use tokio::sync::Semaphore;
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
+// Shared state to hold active counter
+#[derive(Debug)]
+struct Activity {
+    active: AtomicUsize,
+    peak: AtomicUsize,
+    release: Semaphore,
+}
+
+impl Activity {
+    fn new() -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            release: Semaphore::new(0),
+        }
+    }
+}
 
 // Mock agent for testing
 #[derive(Clone, Debug)]
@@ -14,6 +38,7 @@ struct MockAgent {
     name: String,
     response: String,
     should_error: bool,
+    activity: Option<Arc<Activity>>,
 }
 
 impl MockAgent {
@@ -22,6 +47,7 @@ impl MockAgent {
             name: name.to_string(),
             response: response.to_string(),
             should_error: false,
+            activity: None,
         }
     }
 
@@ -30,7 +56,13 @@ impl MockAgent {
             name: name.to_string(),
             response: String::new(),
             should_error: true,
+            activity: None,
         }
+    }
+
+    fn with_activity(mut self, activity: Arc<Activity>) -> Self {
+        self.activity = Some(activity);
+        self
     }
 }
 
@@ -49,6 +81,15 @@ impl Agent for MockAgent {
 
     fn run(&self, _task: String) -> BoxFuture<'_, Result<String, AgentError>> {
         Box::pin(async move {
+            if let Some(activity) = &self.activity {
+                let active = activity.active.fetch_add(1, Ordering::SeqCst) + 1;
+                activity.peak.fetch_max(active, Ordering::SeqCst);
+
+                let _permit = activity.release.acquire().await.unwrap();
+
+                activity.active.fetch_sub(1, Ordering::SeqCst);
+            }
+
             if self.should_error {
                 Err(AgentError::NoChoiceFound)
             } else {
@@ -356,4 +397,122 @@ fn test_concurrent_workflow_builder_empty_description() {
         .description("")
         .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
         .build();
+}
+
+#[tokio::test]
+async fn test_run_respects_max_concurrency() {
+    let activity = Arc::new(Activity::new());
+    let mut builder = ConcurrentWorkflow::builder()
+        .name("MaxConcurrencyWorkflow")
+        .max_concurrency(2);
+    for i in 0..5 {
+        builder = builder.add_agent(Box::new(
+            MockAgent::new(&format!("Agent{i}"), "Response").with_activity(Arc::clone(&activity)),
+        ));
+    }
+    let workflow = builder.build();
+    let run = workflow.run("test task");
+    tokio::pin!(run);
+
+    // Poll while the release gate is closed to observe how many agents start.
+    assert!(futures::poll!(&mut run).is_pending());
+    assert_eq!(activity.active.load(Ordering::SeqCst), 2);
+
+    activity.release.add_permits(5);
+    let conversation = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("workflow should finish after release")
+        .unwrap();
+
+    assert_eq!(activity.peak.load(Ordering::SeqCst), 2);
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert_eq!(conversation.history.len(), 6);
+}
+
+#[tokio::test]
+async fn test_batch_respects_max_concurrency() {
+    let activity = Arc::new(Activity::new());
+    let workflow = ConcurrentWorkflow::builder()
+        .name("BatchMaxConcurrencyWorkflow")
+        .max_concurrency(2)
+        .add_agent(Box::new(
+            MockAgent::new("Agent1", "Response1").with_activity(Arc::clone(&activity)),
+        ))
+        .build();
+    let tasks: Vec<String> = (0..5).map(|i| format!("task{i}")).collect();
+    let run = workflow.run_batch(tasks.clone());
+    tokio::pin!(run);
+
+    // One agent per task isolates the outer batch limit.
+    assert!(futures::poll!(&mut run).is_pending());
+    assert_eq!(activity.active.load(Ordering::SeqCst), 2);
+
+    activity.release.add_permits(5);
+    let results = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("batch should finish after release")
+        .unwrap();
+
+    assert_eq!(activity.peak.load(Ordering::SeqCst), 2);
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert_eq!(results.len(), tasks.len());
+    for task in tasks {
+        assert_eq!(results.get(&task).unwrap().history.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn test_default_concurrency_is_unlimited() {
+    let activity = Arc::new(Activity::new());
+    let mut builder = ConcurrentWorkflow::builder().name("DefaultConcurrencyWorkflow");
+    for i in 0..5 {
+        builder = builder.add_agent(Box::new(
+            MockAgent::new(&format!("Agent{i}"), "Response").with_activity(Arc::clone(&activity)),
+        ));
+    }
+    let workflow = builder.build();
+    let run = workflow.run("test task");
+    tokio::pin!(run);
+
+    assert!(futures::poll!(&mut run).is_pending());
+    assert_eq!(activity.active.load(Ordering::SeqCst), 5);
+
+    activity.release.add_permits(5);
+    let conversation = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("workflow should finish after release")
+        .unwrap();
+
+    assert_eq!(activity.peak.load(Ordering::SeqCst), 5);
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert_eq!(conversation.history.len(), 6);
+}
+
+#[tokio::test]
+async fn test_zero_concurrency() {
+    let activity = Arc::new(Activity::new());
+    let mut builder = ConcurrentWorkflow::builder()
+        .name("ZeroConcurrencyWorkflow")
+        .max_concurrency(0);
+    for i in 0..5 {
+        builder = builder.add_agent(Box::new(
+            MockAgent::new(&format!("Agent{i}"), "Response").with_activity(Arc::clone(&activity)),
+        ));
+    }
+    let workflow = builder.build();
+    let run = workflow.run("test task");
+    tokio::pin!(run);
+
+    assert!(futures::poll!(&mut run).is_pending());
+    assert_eq!(activity.active.load(Ordering::SeqCst), 5);
+
+    activity.release.add_permits(5);
+    let conversation = tokio::time::timeout(std::time::Duration::from_secs(5), run)
+        .await
+        .expect("workflow should finish after release")
+        .unwrap();
+
+    assert_eq!(activity.peak.load(Ordering::SeqCst), 5);
+    assert_eq!(activity.active.load(Ordering::SeqCst), 0);
+    assert_eq!(conversation.history.len(), 6);
 }
