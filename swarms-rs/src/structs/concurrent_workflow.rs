@@ -40,6 +40,7 @@ pub struct ConcurrentWorkflowBuilder {
     name: String,
     description: String,
     metadata_output_dir: String,
+    max_concurrency: Option<usize>,
     agents: Vec<Box<dyn Agent>>,
 }
 
@@ -64,6 +65,12 @@ impl ConcurrentWorkflowBuilder {
         self
     }
 
+    // Limiting concurrency, default to None(unlimited) 0 is also interpereted and unlimited
+    pub fn max_concurrency(mut self, max_concurrency: usize) -> Self {
+        self.max_concurrency = Some(max_concurrency);
+        self
+    }
+
     pub fn agents(self, agents: Vec<Box<dyn Agent>>) -> Self {
         agents
             .into_iter()
@@ -75,6 +82,7 @@ impl ConcurrentWorkflowBuilder {
             name: self.name,
             metadata_output_dir: self.metadata_output_dir,
             description: self.description,
+            max_concurrency: self.max_concurrency,
             agents: self.agents,
             ..Default::default()
         }
@@ -88,6 +96,7 @@ pub struct ConcurrentWorkflow {
     metadata_map: MetadataSchemaMap,
     metadata_output_dir: String,
     tasks: DashSet<String>,
+    max_concurrency: Option<usize>,
     agents: Vec<Box<dyn Agent>>,
     conversation: AgentShortMemory,
 }
@@ -123,7 +132,7 @@ impl ConcurrentWorkflow {
         let (tx, mut rx) = mpsc::channel(self.agents.len());
         let agents = &self.agents;
         stream::iter(agents)
-            .for_each_concurrent(None, |agent| {
+            .for_each_concurrent(self.max_concurrency, |agent| {
                 let tx = tx.clone();
                 let task = task.clone();
                 async move {
@@ -208,7 +217,7 @@ impl ConcurrentWorkflow {
         let results = DashMap::with_capacity(tasks.len());
         let (tx, mut rx) = mpsc::channel(tasks.len());
         stream::iter(tasks)
-            .for_each_concurrent(None, |task| {
+            .for_each_concurrent(self.max_concurrency, |task| {
                 let tx = tx.clone();
                 let workflow = self;
                 async move {
