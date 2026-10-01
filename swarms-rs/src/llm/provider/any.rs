@@ -106,41 +106,31 @@ impl Route {
     }
 }
 
-fn api_key(model: &str, var: &'static str) -> Result<String, ModelNameError> {
-    env::var(var)
-        .ok()
-        .filter(|key| !key.is_empty())
-        .ok_or_else(|| ModelNameError::MissingApiKey {
-            model: model.to_string(),
-            var,
-        })
-}
-
 impl AnyModel {
     /// Build a model from a name like `"anthropic/claude-opus-5-5"`, reading the provider's
     /// API key from the environment. See the module docs for every supported form.
     pub fn from_model_name(name: &str) -> Result<Self, ModelNameError> {
         Ok(match Route::parse(name)? {
             Route::OpenAI(model) => {
-                let key = api_key(name, "OPENAI_API_KEY")?;
+                let key = super::utils::read_api_key(name, "OPENAI_API_KEY")?;
                 let base = env::var("OPENAI_API_BASE")
                     .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
                 AnyModel::OpenAI(OpenAI::from_url(base, key).set_model(model))
             },
             Route::Anthropic(model) => {
-                let key = api_key(name, "ANTHROPIC_API_KEY")?;
+                let key = super::utils::read_api_key(name, "ANTHROPIC_API_KEY")?;
                 let base = env::var("ANTHROPIC_BASE_URL")
                     .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
                 AnyModel::Anthropic(Anthropic::from_url(base, key).set_model(model))
             },
             Route::DeepSeek(model) => {
-                let key = api_key(name, "DEEPSEEK_API_KEY")?;
+                let key = super::utils::read_api_key(name, "DEEPSEEK_API_KEY")?;
                 let base =
                     env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| DEEPSEEK_API_BASE.to_string());
                 AnyModel::OpenAI(OpenAI::from_url(base, key).set_model(model))
             },
             Route::OpenRouter(model) => {
-                let key = api_key(name, "OPENROUTER_API_KEY")?;
+                let key = super::utils::read_api_key(name, "OPENROUTER_API_KEY")?;
                 let base = env::var("OPENROUTER_API_BASE").unwrap_or_else(|_| {
                     crate::llm::provider::openrouter::OPENROUTER_API_BASE.to_string()
                 });

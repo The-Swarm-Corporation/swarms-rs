@@ -24,11 +24,13 @@ use crate::{
     llm::{
         self, CompletionError, Model,
         completion::MimeType,
+        provider::any::ModelNameError,
         request::{CompletionRequest, CompletionResponse},
     },
 };
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 #[derive(Clone)]
 pub struct OpenAI {
@@ -55,7 +57,7 @@ impl OpenAI {
             Client::with_config(config).with_http_client(build_http_client(HeaderMap::new()));
         Self {
             client,
-            model: "gpt-4o-mini".to_owned(),
+            model: OPENAI_DEFAULT_MODEL.to_owned(),
             system_prompt: None,
             use_max_completion_tokens,
         }
@@ -76,6 +78,22 @@ impl OpenAI {
     pub fn from_env_with_model<S: Into<String>>(model: S) -> Self {
         let openai = Self::from_env();
         openai.set_model(model)
+    }
+
+    pub fn try_from_env() -> Result<Self, ModelNameError> {
+        let base_url = env::var("OPENAI_API_BASE").unwrap_or(OPENAI_API_BASE.to_owned());
+        let api_key = super::utils::read_api_key(OPENAI_DEFAULT_MODEL, "OPENAI_API_KEY")?;
+
+        Ok(Self::from_url(base_url, api_key))
+    }
+
+    pub fn try_from_env_with_model<S: Into<String>>(model: S) -> Result<Self, ModelNameError> {
+        let model = model.into();
+
+        let base_url = env::var("OPENAI_API_BASE").unwrap_or(OPENAI_API_BASE.to_owned());
+        let api_key = super::utils::read_api_key(&model, "OPENAI_API_KEY")?;
+
+        Ok(Self::from_url(base_url, api_key).set_model(model))
     }
 
     pub fn set_model<S: Into<String>>(mut self, model: S) -> Self {

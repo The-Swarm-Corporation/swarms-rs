@@ -199,6 +199,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::llm::{
     self, CompletionError, Model,
+    provider::any::ModelNameError,
     request::{CompletionRequest, CompletionResponse},
 };
 
@@ -320,6 +321,28 @@ impl Anthropic {
         let model = model.into();
 
         Self::create_with_cached_fields(api_key, model, base_url)
+    }
+
+    pub fn try_from_env() -> Result<Self, ModelNameError> {
+        let base_url = std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+        let api_key = super::utils::read_api_key(DEFAULT_MODEL, "ANTHROPIC_API_KEY")?;
+
+        Ok(Self::create_with_cached_fields(
+            api_key,
+            DEFAULT_MODEL.to_string(),
+            base_url,
+        ))
+    }
+
+    pub fn try_from_env_with_model<S: Into<String>>(model: S) -> Result<Self, ModelNameError> {
+        let model = model.into();
+
+        let base_url = std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+        let api_key = super::utils::read_api_key(&model, "ANTHROPIC_API_KEY")?;
+
+        Ok(Self::create_with_cached_fields(api_key, model, base_url))
     }
 
     /// Set the model to use

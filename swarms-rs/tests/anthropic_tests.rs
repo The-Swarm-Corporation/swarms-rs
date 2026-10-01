@@ -25,6 +25,7 @@ use swarms_rs::llm::request::{CompletionRequest, ToolDefinition};
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+    use swarms_rs::llm::provider::any::ModelNameError;
 
     /// Tests run in parallel threads, so the ones that set or remove
     /// `ANTHROPIC_API_KEY` must not interleave.
@@ -96,6 +97,120 @@ mod unit_tests {
         unsafe {
             env::remove_var("ANTHROPIC_API_KEY");
         }
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_missing_key() {
+        let _guard = env_lock();
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        let error = Anthropic::try_from_env()
+            .err()
+            .expect("missing API key should return an error");
+
+        assert_eq!(
+            error,
+            ModelNameError::MissingApiKey {
+                model: "claude-opus-5-5".to_string(),
+                var: "ANTHROPIC_API_KEY",
+            }
+        );
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_empty_key() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("ANTHROPIC_API_KEY", "");
+        }
+
+        let result = Anthropic::try_from_env();
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        assert_eq!(
+            result.err().expect("empty API key should return an error"),
+            ModelNameError::MissingApiKey {
+                model: "claude-opus-5-5".to_string(),
+                var: "ANTHROPIC_API_KEY",
+            }
+        );
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_with_key() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("ANTHROPIC_API_KEY", "test-key-from-env");
+        }
+
+        let result = Anthropic::try_from_env();
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        let client = result.expect("supplied API key should allow construction");
+        assert_eq!(client.model(), "claude-opus-5-5");
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_with_model_missing_key() {
+        let _guard = env_lock();
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        let error = Anthropic::try_from_env_with_model("claude-haiku-4-5".to_string())
+            .err()
+            .expect("missing API key should return an error");
+
+        assert_eq!(
+            error,
+            ModelNameError::MissingApiKey {
+                model: "claude-haiku-4-5".to_string(),
+                var: "ANTHROPIC_API_KEY",
+            }
+        );
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_with_model_empty_key() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("ANTHROPIC_API_KEY", "");
+        }
+
+        let result = Anthropic::try_from_env_with_model("claude-haiku-4-5");
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        assert_eq!(
+            result.err().expect("empty API key should return an error"),
+            ModelNameError::MissingApiKey {
+                model: "claude-haiku-4-5".to_string(),
+                var: "ANTHROPIC_API_KEY",
+            }
+        );
+    }
+
+    #[test]
+    fn test_anthropic_try_from_env_with_model() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("ANTHROPIC_API_KEY", "test-key-from-env");
+        }
+
+        let result = Anthropic::try_from_env_with_model("claude-haiku-4-5");
+        unsafe {
+            env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        let client = result.expect("supplied API key should allow construction");
+        assert_eq!(client.model(), "claude-haiku-4-5");
     }
 
     #[test]
