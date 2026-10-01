@@ -41,7 +41,7 @@ use crate::{
     agent::SwarmsAgentBuilder,
     llm::{
         CompletionError, Model,
-        provider::openai::OpenAI,
+        provider::{any::ModelNameError, openai::OpenAI},
         request::{CompletionRequest, CompletionResponse},
     },
 };
@@ -90,6 +90,26 @@ impl OpenRouter {
 
     pub fn from_env_with_model<S: Into<String>>(model: S) -> Self {
         Self::from_env().set_model(model)
+    }
+
+    /// Read environment configuration, returning an error for a missing or empty API key.
+    pub fn try_from_env() -> Result<Self, ModelNameError> {
+        Self::try_from_env_with_model(DEFAULT_MODEL)
+    }
+
+    /// Read environment configuration and select a model, returning credential errors.
+    pub fn try_from_env_with_model<S: Into<String>>(model: S) -> Result<Self, ModelNameError> {
+        let model = model.into();
+        let base_url = env::var("OPENROUTER_API_BASE").unwrap_or(OPENROUTER_API_BASE.to_owned());
+        let api_key = super::utils::read_api_key(&model, "OPENROUTER_API_KEY")?;
+        let mut client = Self::from_url(base_url, api_key).set_model(model);
+        if let Ok(url) = env::var("OPENROUTER_APP_URL") {
+            client = client.with_app_url(url);
+        }
+        if let Ok(name) = env::var("OPENROUTER_APP_NAME") {
+            client = client.with_app_name(name);
+        }
+        Ok(client)
     }
 
     /// Choose the model, e.g. `"anthropic/claude-opus-5.5"` or `"openai/gpt-5.5"`.

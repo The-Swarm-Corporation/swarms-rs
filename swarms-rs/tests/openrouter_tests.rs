@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 
 use swarms_rs::llm::Model;
 use swarms_rs::llm::completion::{AssistantContent, Message};
+use swarms_rs::llm::provider::any::ModelNameError;
 use swarms_rs::llm::provider::openrouter::{DEFAULT_MODEL, OpenRouter};
 use swarms_rs::llm::request::{CompletionRequest, ToolDefinition};
 
@@ -235,6 +236,112 @@ fn defaults_to_auto_router() {
 
 /// These tests set process-wide env vars, so they must not interleave.
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn try_from_env_missing_key() {
+    let _guard = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::remove_var("OPENROUTER_API_KEY");
+    }
+
+    for (result, model) in [
+        (OpenRouter::try_from_env(), DEFAULT_MODEL),
+        (
+            OpenRouter::try_from_env_with_model("custom-model"),
+            "custom-model",
+        ),
+    ] {
+        assert_eq!(
+            result
+                .err()
+                .expect("missing API key should return an error"),
+            ModelNameError::MissingApiKey {
+                model: model.to_string(),
+                var: "OPENROUTER_API_KEY",
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn try_from_env_empty_key() {
+    let _guard = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::set_var("OPENROUTER_API_KEY", "");
+    }
+
+    let results = [
+        (OpenRouter::try_from_env(), DEFAULT_MODEL),
+        (
+            OpenRouter::try_from_env_with_model("custom-model"),
+            "custom-model",
+        ),
+    ];
+    unsafe {
+        std::env::remove_var("OPENROUTER_API_KEY");
+    }
+
+    for (result, model) in results {
+        assert_eq!(
+            result.err().expect("empty API key should return an error"),
+            ModelNameError::MissingApiKey {
+                model: model.to_string(),
+                var: "OPENROUTER_API_KEY",
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn try_from_env_preserves_configuration() {
+    let _guard = ENV_LOCK.lock().await;
+    for model in [None, Some("openai/custom-model")] {
+        let (base_url, captured) = mock_server(
+            200,
+            chat_response(json!({"role": "assistant", "content": "Hello!"})),
+        )
+        .await;
+        unsafe {
+            std::env::set_var("OPENROUTER_API_KEY", "test-key");
+            std::env::set_var("OPENROUTER_API_BASE", &base_url);
+            std::env::set_var("OPENROUTER_APP_URL", "https://example.com");
+            std::env::set_var("OPENROUTER_APP_NAME", "swarms-rs tests");
+        }
+
+        let result = match model {
+            Some(model) => OpenRouter::try_from_env_with_model(model),
+            None => OpenRouter::try_from_env(),
+        };
+        unsafe {
+            std::env::remove_var("OPENROUTER_API_KEY");
+            std::env::remove_var("OPENROUTER_API_BASE");
+            std::env::remove_var("OPENROUTER_APP_URL");
+            std::env::remove_var("OPENROUTER_APP_NAME");
+        }
+
+        let client = result.expect("supplied API key should allow construction");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.completion(request("Hi")),
+        )
+        .await
+        .expect("local request should finish")
+        .unwrap();
+
+        let captured = captured.await.unwrap();
+        assert_eq!(
+            captured.request_line,
+            "POST /api/v1/chat/completions HTTP/1.1"
+        );
+        assert_eq!(captured.header("authorization"), Some("Bearer test-key"));
+        assert_eq!(captured.header("http-referer"), Some("https://example.com"));
+        assert_eq!(
+            captured.header("x-openrouter-title"),
+            Some("swarms-rs tests")
+        );
+        assert_eq!(captured.body["model"], model.unwrap_or(DEFAULT_MODEL));
+    }
+}
 
 #[tokio::test]
 async fn any_model_routes_vendor_names_through_openrouter() {
