@@ -72,7 +72,7 @@ impl SequentialWorkflow {
         SequentialWorkflowBuilder {
             name: "SequentialWorkflow".to_string(),
             description: "A Workflow to solve a problem with sequential agents, each agent's output becomes the input for the next agent.".to_string(),
-            metadata_output_dir: "./temp/sequential_workflow/metadata".to_string(),
+            metadata_output_dir: String::new(),
             agents: Vec::new(),
         }
     }
@@ -103,23 +103,35 @@ impl SequentialWorkflow {
             agents_output_schema.push(output);
         }
 
-        let metadata = MetadataSchema {
-            swarm_id: Uuid::new_v4(),
-            task: task.clone(),
-            description: self.description.clone(),
-            agents_output_schema,
-            timestamp: Local::now(),
-        };
+        if !self.metadata_output_dir.is_empty() {
+            // Construct metadata only as needed
+            let metadata = MetadataSchema {
+                swarm_id: Uuid::new_v4(),
+                task: task.clone(),
+                description: self.description.clone(),
+                agents_output_schema,
+                timestamp: Local::now(),
+            };
 
-        let mut hasher = XxHash3_64::default();
-        task.hash(&mut hasher);
-        let task_hash = hasher.finish();
-        let metadata_path_dir = Path::new(&self.metadata_output_dir);
-        let metadata_output_dir = metadata_path_dir
-            .join(format!("{:x}", task_hash & 0xFFFFFFFF)) // Lower 32 bits of the hash
-            .with_extension("json");
-        let metadata_data = serde_json::to_string_pretty(&metadata)?;
-        persistence::save_to_file(metadata_data, &metadata_output_dir).await?;
+            let mut hasher = XxHash3_64::default();
+            task.hash(&mut hasher);
+            let task_hash = hasher.finish();
+            let metadata_path_dir = Path::new(&self.metadata_output_dir);
+            let metadata_output_dir = metadata_path_dir
+                .join(format!("{:x}", task_hash & 0xFFFFFFFF)) // Lower 32 bits of the hash
+                .with_extension("json");
+            let metadata_data = serde_json::to_string_pretty(&metadata)?;
+
+            if let Err(error) = persistence::save_to_file(metadata_data, &metadata_output_dir).await
+            {
+                tracing::warn!(
+                    "Sequential workflow '{}' could not save metadata to '{}': {}",
+                    self.name,
+                    metadata_output_dir.display(),
+                    error,
+                );
+            }
+        }
 
         Ok(conversation)
     }
