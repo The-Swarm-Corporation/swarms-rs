@@ -244,6 +244,23 @@ async fn test_concurrent_workflow_run_successful() {
     assert!(!conversation.history.is_empty());
 }
 
+#[tokio::test]
+async fn test_concurrent_workflow_handles_metadata_write_error() {
+    let temp_dir = tempdir().unwrap();
+    let invalid_path = temp_dir.path().join("not-directory-content");
+
+    std::fs::write(&invalid_path, "test-content").unwrap();
+
+    let workflow = ConcurrentWorkflow::builder()
+        .name("MetadataWorkflow")
+        .metadata_output_dir(invalid_path.to_str().unwrap())
+        .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
+        .build();
+
+    let result = workflow.run("test task").await;
+    assert!(result.is_ok());
+}
+
 #[test]
 fn test_concurrent_workflow_error_types() {
     // Test different error types

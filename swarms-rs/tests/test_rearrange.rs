@@ -535,6 +535,27 @@ async fn test_json_output() {
 }
 
 #[tokio::test]
+async fn test_rearrange_handles_metadata_write_error() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let invalid_path = temp_dir.path().join("not-directory-content");
+
+    std::fs::write(&invalid_path, "test-content").unwrap();
+
+    let mut workflow = AgentRearrange::builder()
+        .name("MetadataWorkflow")
+        .metadata_output_dir(invalid_path.to_str().unwrap())
+        .autosave(true)
+        .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
+        .flow("Agent1")
+        .build();
+
+    let result = workflow.run("test task").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
 async fn test_empty_flow_validation() {
     let agent1 = Box::new(MockAgent::new("agent1", "response1")) as Box<dyn Agent>;
 

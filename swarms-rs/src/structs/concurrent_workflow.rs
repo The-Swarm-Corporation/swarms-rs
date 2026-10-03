@@ -187,7 +187,16 @@ impl ConcurrentWorkflow {
                 .join(format!("{:x}", task_hash & 0xFFFFFFFF)) // Lower 32 bits of the hash
                 .with_extension("json");
             let metadata_data = serde_json::to_string_pretty(&metadata)?;
-            persistence::save_to_file(metadata_data, &metadata_output_dir).await?;
+
+            if let Err(error) = persistence::save_to_file(metadata_data, &metadata_output_dir).await
+            {
+                tracing::warn!(
+                    "Concurrent workflow '{}' could not save metadata to '{}': {}",
+                    self.name,
+                    metadata_output_dir.display(),
+                    error,
+                );
+            }
         }
 
         self.metadata_map.add(&task, metadata);
