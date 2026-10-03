@@ -383,14 +383,23 @@ async fn test_sequential_workflow_without_metadata_dir() {
     if std::env::var_os("SWARMS_TEST_NO_METADATA_CHILD").is_none() {
         let temp_dir = tempdir().unwrap();
 
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "test_sequential_workflow_without_metadata_dir"])
             .env("SWARMS_TEST_NO_METADATA_CHILD", "1")
             .current_dir(temp_dir.path())
-            .status()
+            .output()
             .unwrap();
 
-        assert!(status.success(), "isolated environment should succeed");
+        assert!(
+            output.status.success(),
+            "isolated environment should succeed"
+        );
+
+        let output_stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output_stdout.contains("1 passed"),
+            "isolated environment should pass tests"
+        );
 
         assert!(
             std::fs::read_dir(temp_dir.path()).unwrap().next().is_none(),
