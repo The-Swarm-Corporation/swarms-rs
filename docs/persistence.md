@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
 ## Where the framework saves files
 
 - **Agent autosave.** Call both `.enable_autosave()` and `.save_state_dir(dir)` on the agent builder. The agent then writes `<dir>/<agent name>_<task hash>.json` during and after each run. The file is the task's conversation as JSON, with its messages under `"history"`. `enable_autosave()` without `save_state_dir` saves nothing and gives no warning.
-- **Workflow metadata.** `SequentialWorkflow` writes one `<task hash>.json` per run to `metadata_output_dir` only if `metadata_output_dir` is set. `ConcurrentWorkflow` and `AgentRearrange` act the same.
+- **Workflow metadata.** `SequentialWorkflow`, `ConcurrentWorkflow` and `AgentRearrange` write metadata only when you set `metadata_output_dir`. `SequentialWorkflow` writes one `<task hash>.json` per run; if the write fails, it logs a warning and still returns its result, while the other two return an error.
 - **Conversation export.** `AgentConversation::export_to_file` uses `save_to_file`; see [Conversations and Memory](conversation.md#saving-and-loading).
 
 To read an autosaved conversation back:
