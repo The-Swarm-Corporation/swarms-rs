@@ -57,7 +57,8 @@ cargo add swarms-rs
 
 # Used by the examples below
 cargo add tokio --features full
-cargo add anyhow
+cargo add anyhow dotenv
+cargo add tracing-subscriber --features env-filter
 
 # Only needed if you define tools with #[tool]
 cargo add swarms-macro serde --features serde/derive
