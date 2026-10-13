@@ -817,7 +817,15 @@ impl AgentRearrange {
             let metadata = self.to_metadata();
             let path = Path::new(&self.metadata_output_dir).join(format!("{}.json", self.id));
             let json_data = serde_json::to_string_pretty(&metadata)?;
-            persistence::save_to_file(json_data.as_bytes(), &path).await?;
+
+            if let Err(error) = persistence::save_to_file(json_data.as_bytes(), &path).await {
+                tracing::warn!(
+                    "Rearrange workflow '{}' could not save metadata to '{}': {}",
+                    self.name,
+                    path.display(),
+                    error,
+                );
+            }
         }
         Ok(())
     }
