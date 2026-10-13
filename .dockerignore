@@ -1,0 +1,11 @@
+# Send Docker only the workspace sources. Everything else stays out, above all local build
+# output (target/ runs to tens of GB) and secrets such as .env.
+*
+!Cargo.toml
+!Cargo.lock
+!swarms-macro/
+!swarms-rs/
+!examples/
+**/target/
+**/.env
+**/.env.*
