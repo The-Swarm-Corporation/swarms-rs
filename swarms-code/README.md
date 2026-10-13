@@ -41,6 +41,19 @@ If the key is missing, the welcome panel says so and the chat still opens, so yo
 to set (or `/model` to a provider whose key you have). `run.sh` passes its arguments through, so `./swarms-code/run.sh -C ~/code/my-app` chats about
 another project. To install the binary instead: `cargo install --path swarms-code`.
 
+**In Docker.** The repository's `Dockerfile` builds an image with Swarms Code, bash and git.
+Mount the project at `/workspace`, which is all the agent can see or change:
+
+```sh
+docker build -t swarms-code .
+docker run --rm -it -e ANTHROPIC_API_KEY -v "$PWD":/workspace swarms-code
+```
+
+Arguments after the image name go to Swarms Code, such as `-p "explain main.rs"` or
+`-m openrouter/openai/gpt-5.5` (pass `OPENROUTER_API_KEY` for that one). `/model` and
+`/effort` choices last only as long as the container, unless you keep them in a volume:
+`-v swarms-code:/home/swarms/.swarms-code`.
+
 ## Using it
 
 | | |
