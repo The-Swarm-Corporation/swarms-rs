@@ -1,3 +1,3 @@
 [workspace]
-members = ["swarms-macro", "swarms-rs", "examples/*"]
+members = ["swarms-macro", "swarms-rs", "swarms-code", "examples/*"]
 resolver = "3"

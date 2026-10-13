@@ -1,0 +1,38 @@
+[package]
+name = "swarms-code"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A terminal coding agent built on swarms-rs"
+authors = ["Kye Gomez <kye@swarms.world>"]
+license = "Apache-2.0"
+repository = "https://github.com/The-Swarm-Corporation/swarms-rs"
+readme = "README.md"
+keywords = ["ai", "agents", "coding", "cli", "swarms"]
+
+[[bin]]
+name = "swarms-code"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = "0.4.45"
+clap = { version = "4.6.7", features = ["derive"] }
+crossterm = "0.29.0"
+dotenvy = "0.15.7"
+futures = "0.3.34"
+globset = "0.4.20"
+ignore = "0.4.33"
+regex = "1.13.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+rustyline = "18.0.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+similar = "3.2.0"
+swarms-rs = { path = "../swarms-rs" }
+textwrap = "0.16.4"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "process", "signal", "time", "fs", "io-util", "sync"] }
+unicode-width = "0.2.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

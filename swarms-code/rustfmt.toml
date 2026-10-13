@@ -1,0 +1,37 @@
+# Basic formatting
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Auto"
+use_small_heuristics = "Default"
+
+# Imports handling
+imports_indent = "Block"
+imports_layout = "Mixed"
+reorder_imports = true
+group_imports = "StdExternalCrate"
+
+# Code structure
+reorder_modules = true
+match_block_trailing_comma = true
+trailing_semicolon = true
+trailing_comma = "Vertical"
+edition = "2024"
+format_code_in_doc_comments = true
+format_macro_matchers = true
+format_macro_bodies = true
+format_strings = true
+normalize_comments = true
+normalize_doc_attributes = true
+
+# Spacing and alignment
+binop_separator = "Front"
+brace_style = "SameLineWhere"
+control_brace_style = "AlwaysSameLine"
+empty_item_single_line = true
+fn_single_line = false
+where_single_line = false
+indent_style = "Block"
+spaces_around_ranges = false
+struct_field_align_threshold = 0
+struct_lit_single_line = true

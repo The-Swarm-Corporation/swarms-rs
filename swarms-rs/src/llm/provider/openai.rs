@@ -18,6 +18,7 @@ use async_openai::{
 };
 use futures::future::BoxFuture;
 use reqwest::header::HeaderMap;
+use serde_json::{Map, Value};
 
 use crate::{
     agent::SwarmsAgentBuilder, // Updated import path - now from crate::agent instead of crate::structs::agent
@@ -38,6 +39,8 @@ pub struct OpenAI {
     /// OpenAI's own endpoint rejects `max_tokens` on reasoning models and wants
     /// `max_completion_tokens`; most OpenAI-compatible servers only know `max_tokens`.
     use_max_completion_tokens: bool,
+    /// Fields added to every request body, for parameters async-openai doesn't model.
+    extra_fields: Map<String, Value>,
 }
 
 impl OpenAI {
@@ -58,12 +61,25 @@ impl OpenAI {
             model: "gpt-4o-mini".to_owned(),
             system_prompt: None,
             use_max_completion_tokens,
+            extra_fields: Map::new(),
         }
     }
 
     /// Send these headers on every request (e.g. OpenRouter's app attribution headers).
     pub(crate) fn with_default_headers(mut self, headers: HeaderMap) -> Self {
         self.client = self.client.with_http_client(build_http_client(headers));
+        self
+    }
+
+    /// Set `reasoning_effort` for reasoning models (`none`, `minimal`, `low`, `medium`,
+    /// `high` or `xhigh`, as the model supports), which trades thoroughness for speed and cost.
+    pub fn with_reasoning_effort<S: Into<String>>(self, effort: S) -> Self {
+        self.with_extra_field("reasoning_effort", Value::String(effort.into()))
+    }
+
+    /// Add `name` to every request body (e.g. OpenRouter's `reasoning` object).
+    pub(crate) fn with_extra_field(mut self, name: &str, value: Value) -> Self {
+        self.extra_fields.insert(name.to_owned(), value);
         self
     }
 
@@ -90,6 +106,18 @@ impl OpenAI {
     pub fn agent_builder(&self) -> SwarmsAgentBuilder<Self> {
         SwarmsAgentBuilder::new_with_model(self.clone())
     }
+}
+
+/// The request as JSON, with `fields` added at the top level.
+fn with_fields(
+    request: &async_openai::types::CreateChatCompletionRequest,
+    fields: &Map<String, Value>,
+) -> Result<Value, serde_json::Error> {
+    let mut body = serde_json::to_value(request)?;
+    if let Value::Object(body) = &mut body {
+        body.extend(fields.clone());
+    }
+    Ok(body)
 }
 
 fn build_http_client(default_headers: HeaderMap) -> reqwest::Client {
@@ -183,12 +211,15 @@ impl Model for OpenAI {
                 serde_json::to_string_pretty(&create_request).unwrap()
             );
 
+            let response: async_openai::types::CreateChatCompletionResponse =
+                if self.extra_fields.is_empty() {
+                    self.client.chat().create(create_request).await?
+                } else {
+                    let body = with_fields(&create_request, &self.extra_fields)?;
+                    self.client.chat().create_byot(body).await?
+                };
             let response: CompletionResponse<async_openai::types::CreateChatCompletionResponse> =
-                self.client
-                    .chat()
-                    .create(create_request)
-                    .await?
-                    .try_into()?;
+                response.try_into()?;
 
             tracing::debug!(
                 "OpenAI response: {}",
@@ -572,5 +603,30 @@ fn is_empty_message(message: &llm::completion::Message) -> bool {
             .iter()
             .all(|c| matches!(c, llm::completion::UserContent::Text(text) if text.text.is_empty())),
         llm::completion::Message::Assistant { content } => content.is_empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use async_openai::types::ChatCompletionRequestUserMessageArgs;
+
+    use super::*;
+
+    #[test]
+    fn extra_fields_join_the_request_body() {
+        let request = CreateChatCompletionRequestArgs::default()
+            .model("o4")
+            .messages([ChatCompletionRequestUserMessageArgs::default()
+                .content("hi")
+                .build()
+                .unwrap()
+                .into()])
+            .build()
+            .unwrap();
+        let client = OpenAI::new("key").with_reasoning_effort("high");
+        let body = with_fields(&request, &client.extra_fields).unwrap();
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(body["model"], "o4");
+        assert_eq!(body["messages"][0]["content"], "hi");
     }
 }

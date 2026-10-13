@@ -36,6 +36,7 @@ use std::env;
 
 use futures::future::BoxFuture;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde_json::json;
 
 use crate::{
     agent::SwarmsAgentBuilder,
@@ -110,6 +111,16 @@ impl OpenRouter {
     /// Your app's name, sent as `X-OpenRouter-Title` for attribution on openrouter.ai.
     pub fn with_app_name<S: AsRef<str>>(self, name: S) -> Self {
         self.with_header(APP_NAME_HEADER, name.as_ref())
+    }
+
+    /// Set the reasoning effort (`reasoning.effort`): `minimal`, `low`, `medium`, `high`,
+    /// `xhigh` or `max`, or `none` to turn reasoning off. OpenRouter translates it for each
+    /// provider; its model list (`/models`) shows the levels each model supports.
+    pub fn with_reasoning_effort<S: Into<String>>(mut self, effort: S) -> Self {
+        self.inner = self
+            .inner
+            .with_extra_field("reasoning", json!({ "effort": effort.into() }));
+        self
     }
 
     pub fn agent_builder(&self) -> SwarmsAgentBuilder<Self> {

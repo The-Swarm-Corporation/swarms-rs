@@ -162,7 +162,8 @@
 //! | `claude-haiku-4-5` | Fastest model | Quick responses, high-throughput applications |
 //!
 //! Current models always think and reject `temperature`, so leave
-//! `AgentConfig::temperature` unset unless the chosen model accepts it.
+//! `AgentConfig::temperature` unset unless the chosen model accepts it. To trade
+//! thoroughness for speed and cost, set an effort level with [`Anthropic::with_effort`].
 //!
 //! ## Performance Optimization
 //!
@@ -269,6 +270,8 @@ pub struct Anthropic {
     api_key_header: HeaderValue,
     /// Pre-parsed messages endpoint URI (performance optimization)
     messages_uri: Uri,
+    /// `output_config.effort`, when set; otherwise the model's default effort applies.
+    effort: Option<String>,
 }
 
 impl Anthropic {
@@ -333,6 +336,17 @@ impl Anthropic {
         &self.model
     }
 
+    /// Set the effort level (`low`, `medium`, `high`, `xhigh` or `max`), which controls how
+    /// much the model thinks and how thoroughly it works, and so its cost and latency. Without
+    /// it, each model uses its own default.
+    ///
+    /// At `xhigh` and `max`, allow a large `max_tokens` (64K or more): thinking counts toward
+    /// it, and a small limit cuts responses off mid-thought.
+    pub fn with_effort<S: Into<String>>(mut self, effort: S) -> Self {
+        self.effort = Some(effort.into());
+        self
+    }
+
     /// Helper function to create Anthropic client with cached fields for performance
     ///
     /// This function pre-computes and caches:
@@ -370,6 +384,7 @@ impl Anthropic {
             base_url,
             api_key_header,
             messages_uri,
+            effort: None,
         }
     }
 
@@ -386,6 +401,7 @@ impl Anthropic {
     /// * `messages` - Vector of Anthropic messages
     /// * `temperature` - Optional temperature parameter
     /// * `tools` - Vector of available tools
+    /// * `effort` - Optional effort level
     ///
     /// # Performance Benefits
     ///
@@ -398,6 +414,7 @@ impl Anthropic {
         messages: Vec<AnthropicMessage>,
         temperature: Option<f64>,
         tools: Vec<AnthropicTool>,
+        effort: Option<String>,
     ) -> AnthropicRequest {
         AnthropicRequest {
             model,
@@ -406,6 +423,7 @@ impl Anthropic {
             messages,
             temperature,
             tools,
+            output_config: effort.map(|effort| OutputConfig { effort }),
         }
     }
 
@@ -531,6 +549,13 @@ struct AnthropicRequest {
     temperature: Option<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<OutputConfig>,
+}
+
+#[derive(Serialize, Debug)]
+struct OutputConfig {
+    effort: String,
 }
 
 /// Anthropic message structure
@@ -704,6 +729,7 @@ impl Model for Anthropic {
                 messages,
                 request.temperature,
                 tools,
+                self.effort.clone(),
             );
 
             // Serialize request with optimized JSON handling
@@ -943,5 +969,26 @@ mod tests {
     fn test_anthropic_with_custom_model() {
         let anthropic = Anthropic::new("test-key").set_model("claude-haiku-4-5");
         assert_eq!(anthropic.model, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn effort_is_sent_in_output_config_only_when_set() {
+        let request = |effort: Option<&str>| {
+            let request = Anthropic::build_optimized_request(
+                "claude-opus-5-5".to_string(),
+                64_000,
+                None,
+                Vec::new(),
+                None,
+                Vec::new(),
+                effort.map(str::to_string),
+            );
+            serde_json::to_value(request).unwrap()
+        };
+        assert_eq!(request(Some("xhigh"))["output_config"]["effort"], "xhigh");
+        assert!(request(None).get("output_config").is_none());
+
+        let anthropic = Anthropic::new("test-key").with_effort("low");
+        assert_eq!(anthropic.effort.as_deref(), Some("low"));
     }
 }
