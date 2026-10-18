@@ -17,4 +17,4 @@ proc-macro = true
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 proc-macro2 = "1.0"
-schemars = { version = "0.8", features = ["derive"] }
+schemars = { version = "1.2", features = ["derive"] }
