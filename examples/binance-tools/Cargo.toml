@@ -24,7 +24,7 @@ validator = { version = "0.20", features = ["derive"] }
 
 
 # auth
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 hex = "0.4"
 
