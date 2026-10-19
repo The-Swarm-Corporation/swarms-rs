@@ -364,6 +364,77 @@ async fn test_sequential_workflow_with_metadata_dir() {
 
     let result = workflow.run("test task").await;
     assert!(result.is_ok());
+
+    let entries =
+        std::fs::read_dir(temp_dir.path()).expect("metadata directory should be readable");
+
+    let paths: Vec<_> = entries
+        .map(|entry| entry.expect("entry is valid").path())
+        .collect();
+
+    assert_eq!(paths.len(), 1, "expected one metadata file");
+}
+
+#[tokio::test]
+async fn test_sequential_workflow_without_metadata_dir() {
+    use tempfile::tempdir;
+
+    // Run isolated test environment to ensure no preexisting directory
+    if std::env::var_os("SWARMS_TEST_NO_METADATA_CHILD").is_none() {
+        let temp_dir = tempdir().unwrap();
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "test_sequential_workflow_without_metadata_dir"])
+            .env("SWARMS_TEST_NO_METADATA_CHILD", "1")
+            .current_dir(temp_dir.path())
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "isolated environment should succeed"
+        );
+
+        let output_stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output_stdout.contains("1 passed"),
+            "isolated environment should pass tests"
+        );
+
+        assert!(
+            std::fs::read_dir(temp_dir.path()).unwrap().next().is_none(),
+            "isolated environment should create no files or directories (readonly compatibility)"
+        );
+
+        return;
+    }
+
+    let workflow = SequentialWorkflow::builder()
+        .name("WithoutMetadataWorkflow")
+        .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
+        .build();
+
+    let result = workflow.run("test task").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_sequential_workflow_handles_metadata_write_error() {
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let invalid_path = temp_dir.path().join("not-directory-content");
+
+    std::fs::write(&invalid_path, "test-content").unwrap();
+
+    let workflow = SequentialWorkflow::builder()
+        .name("MetadataWorkflow")
+        .metadata_output_dir(invalid_path.to_str().unwrap())
+        .add_agent(Box::new(MockAgent::new("Agent1", "Response1")))
+        .build();
+
+    let result = workflow.run("test task").await;
+    assert!(result.is_ok());
 }
 
 #[tokio::test]

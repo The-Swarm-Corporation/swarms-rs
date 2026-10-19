@@ -209,4 +209,3 @@ For a one-off run, `swarm_router(task, config)` creates the router and runs a si
 ### Limitations
 
 - All agents in one router use the same model type. `SwarmRouterConfig::default()` is for OpenAI agents; for any other model (Anthropic, OpenRouter, `AnyModel`, your own `Model`), start from `SwarmRouterConfig::with_agents(agents)`. To mix providers in one router, use `AnyModel` for every agent.
-- The sequential type writes a metadata file per run to `./temp/sequential_workflow/metadata`, relative to the current directory. See [Persistence](persistence.md#where-the-framework-saves-files).
