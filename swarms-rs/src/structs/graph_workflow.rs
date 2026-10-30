@@ -553,10 +553,11 @@ impl DAGWorkflow {
     ///
     /// ## Returns
     ///
-    /// Returns a vector of cycles (each cycle is a vector of agent names).
+    /// Returns a vector of cycles (each cycle is a vector of agent names), or an error if the
+    /// workflow graph is inconsistent with the agent name mapping.
     ///
     /// Example: vec![vec!["A", "B", "C"], vec!["X", "Y"]]
-    pub fn detect_potential_deadlocks(&self) -> Vec<Vec<String>> {
+    pub fn detect_potential_deadlocks(&self) -> Result<Vec<Vec<String>>, GraphWorkflowError> {
         // Build a dependency graph where an edge A→B means B depends on A
         let mut dependency_graph = petgraph::Graph::<String, ()>::new();
         let mut node_map = HashMap::new();
@@ -570,7 +571,12 @@ impl DAGWorkflow {
         // Add dependencies
         for node_idx in self.workflow.node_indices() {
             if let Some(node) = self.workflow.node_weight(node_idx) {
-                let target_dep_idx = *node_map.get(&node.name).unwrap();
+                let target_dep_idx = *node_map.get(&node.name).ok_or_else(|| {
+                    GraphWorkflowError::AgentNotFound(format!(
+                        "Agent '{}' missing from dependency graph mapping",
+                        node.name
+                    ))
+                })?;
 
                 // Add an edge for each incoming connection
                 for source in self
@@ -578,7 +584,12 @@ impl DAGWorkflow {
                     .neighbors_directed(node_idx, Direction::Incoming)
                 {
                     if let Some(source_node) = self.workflow.node_weight(source) {
-                        let source_dep_idx = *node_map.get(&source_node.name).unwrap();
+                        let source_dep_idx = *node_map.get(&source_node.name).ok_or_else(|| {
+                            GraphWorkflowError::AgentNotFound(format!(
+                                "Agent '{}' missing from dependency graph mapping",
+                                source_node.name
+                            ))
+                        })?;
                         dependency_graph.add_edge(source_dep_idx, target_dep_idx, ());
                     }
                 }
@@ -589,14 +600,15 @@ impl DAGWorkflow {
         let sccs = petgraph::algo::kosaraju_scc(&dependency_graph);
 
         // Return only the non-trivial SCCs (size > 1)
-        sccs.into_iter()
+        Ok(sccs
+            .into_iter()
             .filter(|scc| scc.len() > 1)
             .map(|scc| {
                 scc.into_iter()
                     .map(|idx| dependency_graph[idx].clone())
                     .collect()
             })
-            .collect()
+            .collect())
     }
 }
 

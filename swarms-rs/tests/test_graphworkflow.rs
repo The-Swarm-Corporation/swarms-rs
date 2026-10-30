@@ -551,7 +551,7 @@ mod tests {
         workflow.connect_agents("b", "c", Flow::default()).unwrap();
 
         // no cycles, should return empty vector
-        let deadlocks = workflow.detect_potential_deadlocks();
+        let deadlocks = workflow.detect_potential_deadlocks().unwrap();
         assert_eq!(deadlocks.len(), 0);
 
         // try to add c -> a, which should fail because has_cycle prevents it
