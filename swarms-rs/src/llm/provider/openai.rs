@@ -44,6 +44,15 @@ pub struct OpenAI {
 }
 
 impl OpenAI {
+    /// Creates a client for OpenAI's API.
+    ///
+    /// Every call builds an HTTP client, which loads the system root certificates (a couple of
+    /// milliseconds). To create many agents, build the model once and `clone()` it, or use
+    /// [`OpenAI::agent_builder`]: clones share the HTTP client and its connection pool and are cheap.
+    ///
+    /// Share a model between the tasks of one Tokio runtime. Do not share one between independent
+    /// runtimes that run at the same time: pooled connections belong to the runtime that opened
+    /// them, and a request on a connection whose runtime has shut down can fail or never complete.
     pub fn new<S: Into<String>>(api_key: S) -> Self {
         Self::from_url(OPENAI_API_BASE.to_owned(), api_key.into())
     }
@@ -54,8 +63,15 @@ impl OpenAI {
         let config = OpenAIConfig::new()
             .with_api_base(base_url.trim_end_matches('/'))
             .with_api_key(api_key);
-        let client =
-            Client::with_config(config).with_http_client(build_http_client(HeaderMap::new()));
+        // `Client::with_config` would build a default `reqwest::Client` (root certificates and
+        // all, ~2 ms) only for `with_http_client` to replace it, so this built two clients and
+        // discarded one. `Client::build` takes ours directly; `Default::default()` is the same
+        // backoff `with_config` uses.
+        let client = Client::build(
+            build_http_client(HeaderMap::new()),
+            config,
+            Default::default(),
+        );
         Self {
             client,
             model: "gpt-4o-mini".to_owned(),
@@ -103,6 +119,8 @@ impl OpenAI {
         self.system_prompt = Some(prompt.into());
     }
 
+    /// A builder for an agent that uses a clone of this model, so it shares this model's HTTP
+    /// client rather than building a new one. See [`OpenAI::new`] for the sharing rules.
     pub fn agent_builder(&self) -> SwarmsAgentBuilder<Self> {
         SwarmsAgentBuilder::new_with_model(self.clone())
     }
