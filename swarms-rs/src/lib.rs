@@ -7,6 +7,11 @@ pub mod prompts;
 pub mod structs;
 pub use swarms_macro;
 
+// Spending caps (`budget` feature), so callers can build a shared budget or fleet without
+// their own `llm-budget` dependency.
+#[cfg(feature = "budget")]
+pub use llm_budget;
+
 // Used by the exported logging macros, so callers don't need their own `log` dependency.
 #[doc(hidden)]
 pub use log;

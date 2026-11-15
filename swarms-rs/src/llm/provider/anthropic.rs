@@ -845,6 +845,17 @@ impl Model for Anthropic {
             })
         })
     }
+
+    #[cfg(feature = "budget")]
+    fn usage(&self, response: &Self::RawCompletionResponse) -> Option<(String, llm_budget::Usage)> {
+        Some((
+            response.model.clone(),
+            llm_budget::Usage::new(
+                u64::from(response.usage.input_tokens),
+                u64::from(response.usage.output_tokens),
+            ),
+        ))
+    }
 }
 
 /// Convert internal user content to Anthropic format

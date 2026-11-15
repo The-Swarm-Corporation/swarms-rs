@@ -229,6 +229,28 @@ impl Model for OpenAI {
             Ok(response)
         })
     }
+
+    #[cfg(feature = "budget")]
+    fn usage(&self, response: &Self::RawCompletionResponse) -> Option<(String, llm_budget::Usage)> {
+        let usage = response.usage.as_ref()?;
+        let input_tokens = u64::from(usage.prompt_tokens);
+        // Cached prompt tokens are a subset of `prompt_tokens`, billed at the cache price.
+        let cached_input_tokens = usage
+            .prompt_tokens_details
+            .as_ref()
+            .and_then(|details| details.cached_tokens)
+            .map_or(0, u64::from)
+            .min(input_tokens);
+        Some((
+            response.model.clone(),
+            llm_budget::Usage {
+                input_tokens,
+                cached_input_tokens,
+                cache_write_tokens: 0,
+                output_tokens: u64::from(usage.completion_tokens),
+            },
+        ))
+    }
 }
 
 impl From<async_openai::error::OpenAIError> for CompletionError {

@@ -55,6 +55,13 @@ http-body-util = "0.1"
 # macro
 swarms-macro = { version = "0.2.0", path = "../swarms-macro" }
 
+# Spending caps for agents (`budget` feature)
+llm-budget = { version = "0.3.1", optional = true }
+
+[features]
+# `SwarmsAgentBuilder::budget_usd` and `budget`: stop an agent at a USD spending cap.
+budget = ["dep:llm-budget"]
+
 [dev-dependencies]
 anyhow = "1"
 dotenv = "0.15"

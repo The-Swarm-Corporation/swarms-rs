@@ -180,6 +180,14 @@ impl Model for AnyModel {
             }
         })
     }
+
+    #[cfg(feature = "budget")]
+    fn usage(&self, response: &Self::RawCompletionResponse) -> Option<(String, llm_budget::Usage)> {
+        // Every provider's response carries `model` and a `usage` block llm-budget can read.
+        let model = response.get("model")?.as_str()?.to_string();
+        let usage = llm_budget::Usage::from_value(response).ok()?;
+        Some((model, usage))
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +229,41 @@ mod tests {
         assert!(Route::parse("mystery-model").is_err());
         assert!(Route::parse("openai/").is_err());
         assert!(Route::parse("/gpt-4o").is_err());
+    }
+
+    #[cfg(feature = "budget")]
+    #[test]
+    fn reads_usage_from_each_provider() {
+        let model = AnyModel::OpenAI(OpenAI::new("test-key"));
+        let openai = serde_json::json!({
+            "model": "gpt-4o-2024-08-06",
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 300,
+                "total_tokens": 1500,
+                "prompt_tokens_details": { "cached_tokens": 1000 }
+            }
+        });
+        let (name, usage) = model.usage(&openai).unwrap();
+        assert_eq!(name, "gpt-4o-2024-08-06");
+        assert_eq!(
+            (usage.input_tokens, usage.cached_input_tokens),
+            (1200, 1000)
+        );
+        assert_eq!(usage.output_tokens, 300);
+
+        let anthropic = serde_json::json!({
+            "model": "claude-haiku-4-5",
+            "usage": { "input_tokens": 80, "output_tokens": 20 }
+        });
+        let (name, usage) = model.usage(&anthropic).unwrap();
+        assert_eq!(name, "claude-haiku-4-5");
+        assert_eq!((usage.input_tokens, usage.output_tokens), (80, 20));
+
+        assert!(
+            model
+                .usage(&serde_json::json!({ "model": "gpt-4o" }))
+                .is_none()
+        );
     }
 }

@@ -181,6 +181,12 @@ where
     tools_impl: DashMap<String, Arc<dyn ToolDyn>>,
     /// Handoff targets, keyed by the name of the tool that transfers to them
     handoffs: HashMap<String, Arc<dyn Agent>>,
+    /// Spending cap shared with other agents or code, set by `budget`
+    #[cfg(feature = "budget")]
+    budget: Option<Arc<llm_budget::AgentBudget>>,
+    /// Spending cap in USD for this agent alone, set by `budget_usd`
+    #[cfg(feature = "budget")]
+    budget_usd: Option<f64>,
 }
 
 impl<M> SwarmsAgentBuilder<M>
@@ -217,6 +223,10 @@ where
             tools: vec![],
             tools_impl: DashMap::new(),
             handoffs: HashMap::new(),
+            #[cfg(feature = "budget")]
+            budget: None,
+            #[cfg(feature = "budget")]
+            budget_usd: None,
         }
     }
 
@@ -614,6 +624,17 @@ where
             self.tools_impl.remove(&tool_name);
         }
 
+        #[cfg(feature = "budget")]
+        let budget = self.budget.or_else(|| {
+            self.budget_usd.map(|limit_usd| {
+                Arc::new(
+                    llm_budget::AgentBudget::builder(self.config.name.clone(), limit_usd)
+                        .build()
+                        .expect("budget_usd checked the limit"),
+                )
+            })
+        });
+
         let agent = SwarmsAgent {
             model: self.model,
             config: self.config.clone(),
@@ -622,6 +643,8 @@ where
             tools: self.tools.clone(),
             tools_impl: self.tools_impl,
             handoffs: self.handoffs,
+            #[cfg(feature = "budget")]
+            budget,
         };
 
         if agent.config.verbose && log::log_enabled!(log::Level::Info) {
@@ -665,6 +688,37 @@ where
 
     pub fn max_loops(mut self, max_loops: u32) -> Self {
         self.config.max_loops = max_loops;
+        self
+    }
+
+    /// Stops the agent once its LLM calls have cost `limit_usd`.
+    ///
+    /// Each completion is charged from the token usage the provider reports, at that
+    /// model's price from llm-budget's built-in price table. A run that hits the cap ends
+    /// its loop early and returns what it has; a call made after that fails with
+    /// `AgentError::BudgetError`. Read the spend with `SwarmsAgent::budget`.
+    ///
+    /// # Panics
+    ///
+    /// If `limit_usd` is not a positive, finite amount.
+    #[cfg(feature = "budget")]
+    pub fn budget_usd(mut self, limit_usd: f64) -> Self {
+        assert!(
+            limit_usd.is_finite() && limit_usd > 0.0,
+            "budget_usd must be a positive amount, got {limit_usd}"
+        );
+        self.budget_usd = Some(limit_usd);
+        self.budget = None;
+        self
+    }
+
+    /// Like `budget_usd`, with a budget you hold yourself. To give each agent in a swarm or
+    /// workflow its share of one total, register it with an `llm_budget::FleetAllocator`
+    /// and pass `allocator.get_agent(name)` here.
+    #[cfg(feature = "budget")]
+    pub fn budget(mut self, budget: Arc<llm_budget::AgentBudget>) -> Self {
+        self.budget = Some(budget);
+        self.budget_usd = None;
         self
     }
 
@@ -898,6 +952,10 @@ where
     /// Handoff targets, keyed by the name of the tool that transfers to them (not serialized)
     #[serde(skip)]
     handoffs: HashMap<String, Arc<dyn Agent>>,
+    /// Spending cap charged for every LLM call (not serialized)
+    #[cfg(feature = "budget")]
+    #[serde(skip)]
+    budget: Option<Arc<llm_budget::AgentBudget>>,
 }
 
 impl<M> SwarmsAgent<M>
@@ -1001,6 +1059,75 @@ where
             tools: vec![],
             tools_impl: DashMap::new(),
             handoffs: HashMap::new(),
+            #[cfg(feature = "budget")]
+            budget: None,
+        }
+    }
+
+    /// The spending cap set with `SwarmsAgentBuilder::budget_usd` or `budget`, if any, for
+    /// reading what the agent has spent.
+    #[cfg(feature = "budget")]
+    pub fn budget(&self) -> Option<&Arc<llm_budget::AgentBudget>> {
+        self.budget.as_ref()
+    }
+
+    /// Fails if the budget was killed or has nothing left to spend.
+    #[cfg(feature = "budget")]
+    fn check_budget(&self) -> Result<(), AgentError> {
+        let Some(budget) = &self.budget else {
+            return Ok(());
+        };
+        // Errors when the budget was killed or spending is already past the cap.
+        budget.reserve(0.0)?.release();
+        if budget.is_exhausted() {
+            return Err(llm_budget::BudgetError::AgentExhausted {
+                agent_id: self.config.name.clone(),
+                spent: budget.spent_usd(),
+                limit: budget.limit_usd(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Books the cost of a completion that has already been made.
+    #[cfg(feature = "budget")]
+    fn charge_budget(&self, response: &M::RawCompletionResponse) {
+        let Some(budget) = &self.budget else {
+            return;
+        };
+        let Some((model, usage)) = self.model.usage(response) else {
+            tracing::warn!(
+                "Agent<{}>: the model reported no token usage, so this call isn't counted against the budget",
+                self.config.name
+            );
+            return;
+        };
+        let cost = match llm_budget::PriceTable::builtin().get(&model) {
+            Some(price) => price.cost_usage(&usage),
+            None => {
+                tracing::warn!(
+                    "Agent<{}>: no price listed for model '{}', charging the Standard tier's average price",
+                    self.config.name,
+                    model
+                );
+                llm_budget::ModelTier::Standard.estimate_cost(
+                    u32::try_from(usage.input_tokens).unwrap_or(u32::MAX),
+                    u32::try_from(usage.output_tokens).unwrap_or(u32::MAX),
+                )
+            },
+        };
+        let context = llm_budget::ChargeContext::new()
+            .model(model)
+            .tokens(usage.input_tokens, usage.output_tokens);
+        let outcome = budget.charge_usd_force(cost, context);
+        if outcome.over_cap {
+            tracing::warn!(
+                "Agent<{}> reached its budget: spent ${:.4} of ${:.2}",
+                self.config.name,
+                outcome.total_spent_usd,
+                budget.limit_usd()
+            );
         }
     }
 
@@ -1080,7 +1207,11 @@ where
             max_tokens: Some(self.config.max_tokens),
         };
 
+        #[cfg(feature = "budget")]
+        self.check_budget()?;
         let response = self.model.completion(request).await?;
+        #[cfg(feature = "budget")]
+        self.charge_budget(&response.raw_response);
         if response.choice.is_empty() {
             return Err(AgentError::NoChoiceFound);
         }
@@ -1222,11 +1353,15 @@ where
             max_tokens: Some(self.config.max_tokens),
         };
 
+        #[cfg(feature = "budget")]
+        self.check_budget()?;
         let response = self.model.completion(request).await.inspect_err(|e| {
             if self.config.verbose {
                 log_error_ctx!(&self.config.name, &self.config.id, e, "LLM completion");
             }
         })?;
+        #[cfg(feature = "budget")]
+        self.charge_budget(&response.raw_response);
 
         // Replies can be split across several text blocks; no tools are offered here, so
         // any tool call block is ignored.
@@ -1494,6 +1629,21 @@ where
                             self.config.max_loops
                         );
                     }
+                    break;
+                }
+
+                // Stop at the spending cap; after the first loop, keep the output so far.
+                #[cfg(feature = "budget")]
+                if let Err(error) = self.check_budget() {
+                    if loop_count == 0 {
+                        return Err(error);
+                    }
+                    tracing::warn!(
+                        "Agent<{}> stopping at loop {}: {}",
+                        self.config.name,
+                        loop_count + 1,
+                        error
+                    );
                     break;
                 }
 

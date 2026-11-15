@@ -149,4 +149,9 @@ impl Model for OpenRouter {
     {
         self.inner.completion(request)
     }
+
+    #[cfg(feature = "budget")]
+    fn usage(&self, response: &Self::RawCompletionResponse) -> Option<(String, llm_budget::Usage)> {
+        self.inner.usage(response)
+    }
 }
