@@ -13,6 +13,17 @@ pub trait Model {
         &self,
         request: CompletionRequest,
     ) -> BoxFuture<'_, Result<CompletionResponse<Self::RawCompletionResponse>, CompletionError>>;
+
+    /// The model name and token counts a response reports, used to charge an agent's
+    /// spending cap (see `SwarmsAgentBuilder::budget_usd`). `None` when the provider
+    /// doesn't report usage.
+    #[cfg(feature = "budget")]
+    fn usage(
+        &self,
+        _response: &Self::RawCompletionResponse,
+    ) -> Option<(String, llm_budget::Usage)> {
+        None
+    }
 }
 
 // Errors

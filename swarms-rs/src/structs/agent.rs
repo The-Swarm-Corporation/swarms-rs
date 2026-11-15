@@ -30,6 +30,9 @@ pub enum AgentError {
     ToolNotFound(String),
     #[error("Tool error: {0}")]
     ToolError(#[from] ToolError),
+    #[cfg(feature = "budget")]
+    #[error("Budget error: {0}")]
+    BudgetError(#[from] llm_budget::BudgetError),
 
     #[cfg(test)]
     #[error("Test error")]
