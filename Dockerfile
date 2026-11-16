@@ -9,7 +9,7 @@
 # Both stages use Debian trixie, so the examples find the glibc and OpenSSL they were linked
 # against.
 
-FROM rust:1.99-slim-trixie AS builder
+FROM rust:1.100-slim-trixie AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev \
