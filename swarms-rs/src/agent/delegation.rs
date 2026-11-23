@@ -23,6 +23,20 @@ use crate::{
 /// OpenAI and Anthropic both require tool names to match `^[a-zA-Z0-9_-]{1,64}$`.
 const MAX_TOOL_NAME_LEN: usize = 64;
 
+/// Whether `c` is one of the characters a tool name may contain (`[a-zA-Z0-9_-]`).
+fn is_valid_tool_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// Whether `name` is a tool name OpenAI and Anthropic accept, i.e. matches
+/// `^[a-zA-Z0-9_-]{1,64}$`: 1 to 64 characters, each in `[a-zA-Z0-9_-]`.
+///
+/// This is the single source of truth for the provider rule, shared by the registration
+/// path (`SwarmsAgentBuilder::register_tool`) and the delegation name builder below.
+pub(crate) fn is_valid_tool_name(name: &str) -> bool {
+    (1..=MAX_TOOL_NAME_LEN).contains(&name.len()) && name.chars().all(is_valid_tool_name_char)
+}
+
 /// Build a valid tool name `<prefix><agent name>` that `is_taken` doesn't already use.
 ///
 /// Characters outside `[a-zA-Z0-9_-]` become `_`, and the name is shortened to fit the
@@ -34,13 +48,7 @@ pub(crate) fn tool_name_for(
 ) -> String {
     let mut body: String = agent_name
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if is_valid_tool_name_char(c) { c } else { '_' })
         .collect();
     if body.trim_matches('_').is_empty() {
         body = "agent".to_string();
