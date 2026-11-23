@@ -28,9 +28,6 @@ pub enum ConversationError {
     SaveTaskJoin(String),
 }
 
-/// Handle to the most recent background save spawned by [`AgentConversation::push`], kept so it
-/// can be awaited through [`AgentConversation::flush`]. `Arc<Mutex<_>>` stays `Clone` so the
-/// struct keeps deriving `Clone`.
 type SaveTask = Arc<Mutex<Option<JoinHandle<Result<(), ConversationError>>>>>;
 
 #[derive(Clone, Serialize)]
@@ -179,11 +176,6 @@ impl AgentConversation {
         }
     }
 
-    /// Await the most recent background save spawned by [`Self::push`] and surface its result.
-    ///
-    /// Each `push` to a conversation with a save path spawns a detached save task; this awaits the
-    /// latest one so a caller can make sure the history reached disk (and observe a write failure)
-    /// before shutting down. Returns `Ok(())` when there is no save in flight.
     pub async fn flush(&self) -> Result<(), ConversationError> {
         let handle = self.save_task.lock().ok().and_then(|mut task| task.take());
         match handle {
@@ -447,14 +439,9 @@ impl From<&AgentConversation> for Vec<crate::llm::completion::Message> {
 mod tests {
     use super::*;
 
-    // `save_filepath` is private with no public setter, so these tests set it directly to drive
-    // the save branch in `push`.
-
     #[tokio::test]
     async fn push_save_error_is_surfaced_via_flush() {
         let dir = tempfile::TempDir::new().unwrap();
-        // Make an ancestor of the save path an existing file, so `create_dir_all` fails
-        // deterministically and the spawned save returns an error.
         let blocker = dir.path().join("blocker");
         std::fs::File::create(&blocker).unwrap();
         let bad_path = blocker.join("sub").join("history.json");
