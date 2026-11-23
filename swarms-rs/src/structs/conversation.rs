@@ -203,14 +203,6 @@ impl AgentConversation {
         Ok(())
     }
 
-    // TODO: We don't need this function now
-    // Load the conversation history from a JSON file.
-    // async fn load_from_json(&self, filepath: &Path) -> Result<Vec<Message>, ConversationError> {
-    //     let data = persistence::load_from_file(filepath).await?;
-    //     let history = serde_json::from_slice(&data)?;
-    //     Ok(history)
-    // }
-
     /// Export the conversation history to a file
     pub async fn export_to_file(&self, filepath: &Path) -> Result<(), ConversationError> {
         let data = self.to_string();
@@ -403,5 +395,43 @@ impl From<&AgentConversation> for Vec<crate::llm::completion::Message> {
                 },
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn import_from_file_loads_json_conversation() {
+        let mut original = AgentConversation::new("tester".to_string());
+        original.add(Role::User("alice".to_string()), "hello there".to_string());
+        original.add(
+            Role::Assistant("bot".to_string()),
+            "general kenobi".to_string(),
+        );
+
+        let json = original.to_json().expect("serialize history to json");
+        let file = tempfile::NamedTempFile::new().expect("create temp file");
+        std::fs::write(file.path(), json).expect("write json to temp file");
+
+        let mut imported = AgentConversation::new("tester".to_string());
+        imported
+            .import_from_file(file.path())
+            .await
+            .expect("import json conversation");
+
+        // The JSON path round-trips every message exactly (role and content).
+        assert_eq!(imported.history.len(), original.history.len());
+        for (expected, actual) in original.history.iter().zip(imported.history.iter()) {
+            assert_eq!(actual.role, expected.role);
+            assert_eq!(actual.content, expected.content);
+        }
+
+        assert_eq!(imported.history[0].role, Role::User("alice".to_string()));
+        let Content::Text(text) = &imported.history[0].content else {
+            panic!("expected text content");
+        };
+        assert!(text.ends_with("hello there"));
     }
 }
