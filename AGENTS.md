@@ -21,6 +21,7 @@ Rules for coding agents working in this repository.
 - Add a test only when it checks behavior the PR changes.
 - A bug fix gets a test that fails without the fix.
 - Docs-only and comment-only PRs get no tests.
+- Tests go in the `swarms-rs/tests/` folder, never in the same file as the code they test. Do not add `#[cfg(test)]` modules to files in `src/`.
 - Put new tests in an existing file in `swarms-rs/tests/` when one covers the area. Create a new file only when none does.
 
 ## Pull requests
