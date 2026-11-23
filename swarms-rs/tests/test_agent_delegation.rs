@@ -335,8 +335,6 @@ fn add_numbers(a: i64, b: i64) -> Result<i64, TestError> {
     Ok(a + b)
 }
 
-/// A hand-written tool whose `definition().name` is one the providers reject (a space and a
-/// `!` are outside `^[a-zA-Z0-9_-]{1,64}$`), used to prove `register_tool` turns it away.
 struct BadNameTool;
 
 impl Tool for BadNameTool {

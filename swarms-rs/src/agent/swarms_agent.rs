@@ -368,10 +368,6 @@ where
 
     /// Register a tool; a later tool with the same name replaces the earlier one, so the
     /// model is never offered duplicate names (which some providers reject).
-    ///
-    /// Returns `Err` without registering the tool when `definition.name` is not a name the
-    /// providers accept (`^[a-zA-Z0-9_-]{1,64}$`), so the bad name never reaches OpenAI or
-    /// Anthropic.
     fn register_tool(
         &mut self,
         definition: ToolDefinition,

@@ -28,11 +28,6 @@ fn is_valid_tool_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
-/// Whether `name` is a tool name OpenAI and Anthropic accept, i.e. matches
-/// `^[a-zA-Z0-9_-]{1,64}$`: 1 to 64 characters, each in `[a-zA-Z0-9_-]`.
-///
-/// This is the single source of truth for the provider rule, shared by the registration
-/// path (`SwarmsAgentBuilder::register_tool`) and the delegation name builder below.
 pub(crate) fn is_valid_tool_name(name: &str) -> bool {
     (1..=MAX_TOOL_NAME_LEN).contains(&name.len()) && name.chars().all(is_valid_tool_name_char)
 }
