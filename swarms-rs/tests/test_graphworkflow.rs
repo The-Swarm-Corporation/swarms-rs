@@ -570,8 +570,6 @@ mod tests {
         workflow.connect_agents("a", "b", Flow::default()).unwrap();
         workflow.connect_agents("b", "c", Flow::default()).unwrap();
 
-        // the node_map is kept in sync with name_to_node, so this well-formed
-        // workflow must take the Ok path and report no cycles
         let result = workflow.detect_potential_deadlocks();
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());

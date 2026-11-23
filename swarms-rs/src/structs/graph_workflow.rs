@@ -556,10 +556,6 @@ impl DAGWorkflow {
     /// Returns a vector of cycles (each cycle is a vector of agent names).
     ///
     /// Example: vec![vec!["A", "B", "C"], vec!["X", "Y"]]
-    ///
-    /// Returns a [`GraphWorkflowError::AgentNotFound`] if a workflow node name is
-    /// missing from the internal node map (which should not happen for a
-    /// well-formed workflow).
     pub fn detect_potential_deadlocks(&self) -> Result<Vec<Vec<String>>, GraphWorkflowError> {
         // Build a dependency graph where an edge A→B means B depends on A
         let mut dependency_graph = petgraph::Graph::<String, ()>::new();
