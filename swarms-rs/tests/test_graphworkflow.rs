@@ -560,6 +560,24 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_potential_deadlocks_returns_ok() {
+        let mut workflow = DAGWorkflow::new("test", "Test workflow");
+        workflow.register_agent(create_mock_agent("1", "a", "Agent A", "a"));
+        workflow.register_agent(create_mock_agent("2", "b", "Agent B", "b"));
+        workflow.register_agent(create_mock_agent("3", "c", "Agent C", "c"));
+
+        // a -> b -> c (acyclic)
+        workflow.connect_agents("a", "b", Flow::default()).unwrap();
+        workflow.connect_agents("b", "c", Flow::default()).unwrap();
+
+        // the node_map is kept in sync with name_to_node, so this well-formed
+        // workflow must take the Ok path and report no cycles
+        let result = workflow.detect_potential_deadlocks();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
     fn test_get_workflow_structure() {
         let mut workflow = DAGWorkflow::new("test", "Test workflow");
         workflow.register_agent(create_mock_agent("1", "a", "Agent A", "a"));
