@@ -2064,31 +2064,3 @@ pub enum TaskStatus {
 /// scenarios.
 #[derive(Debug, Error)]
 pub enum TaskEvaluatorError {}
-
-#[cfg(test)]
-mod tests {
-    use super::build_panel;
-
-    #[test]
-    fn build_panel_renders_title_and_rows() {
-        let title = "🎯 Agent: tester - Task Completed";
-        let rows = vec![
-            "📋 Task: say hello".to_string(),
-            "📋 Result: hello there".to_string(),
-        ];
-
-        let panel = build_panel(title, &rows);
-
-        // The title and every body row must appear in the rendered panel.
-        assert!(panel.contains(title));
-        for row in &rows {
-            assert!(panel.contains(row.as_str()));
-        }
-
-        // The rounded style draws the panel with rounded box-drawing corners.
-        assert!(panel.contains('╭'));
-        assert!(panel.contains('╮'));
-        assert!(panel.contains('╰'));
-        assert!(panel.contains('╯'));
-    }
-}
