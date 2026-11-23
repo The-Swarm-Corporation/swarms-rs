@@ -2,12 +2,14 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use chrono::Local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::task::JoinHandle;
 
 use crate::structs::{
     persistence::{self, PersistenceError},
@@ -22,7 +24,14 @@ pub enum ConversationError {
     FilePersistenceError(#[from] PersistenceError),
     #[error("Invalid conversation format: {0}")]
     InvalidFormat(String),
+    #[error("Save task join error: {0}")]
+    SaveTaskJoin(String),
 }
+
+/// Handle to the most recent background save spawned by [`AgentConversation::push`], kept so it
+/// can be awaited through [`AgentConversation::flush`]. `Arc<Mutex<_>>` stays `Clone` so the
+/// struct keeps deriving `Clone`.
+type SaveTask = Arc<Mutex<Option<JoinHandle<Result<(), ConversationError>>>>>;
 
 #[derive(Clone, Serialize)]
 pub struct AgentShortMemory(pub DashMap<Task, AgentConversation>);
@@ -77,6 +86,8 @@ pub struct AgentConversation {
     save_filepath: Option<PathBuf>,
     pub history: Vec<Message>,
     max_messages: Option<usize>,
+    #[serde(skip)]
+    save_task: SaveTask,
 }
 
 impl AgentConversation {
@@ -86,6 +97,7 @@ impl AgentConversation {
             save_filepath: None,
             history: Vec::new(),
             max_messages: Some(1_000_000), // Default maximum messages
+            save_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -96,6 +108,7 @@ impl AgentConversation {
             save_filepath: None,
             history: Vec::new(),
             max_messages,
+            save_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -150,10 +163,34 @@ impl AgentConversation {
         if let Some(filepath) = &self.save_filepath {
             let filepath = filepath.clone();
             let history = self.history.clone();
-            tokio::spawn(async move {
-                let history = history;
-                let _ = Self::save_as_json(&filepath, &history).await;
+            let handle = tokio::spawn(async move {
+                let result = Self::save_as_json(&filepath, &history).await;
+                if let Err(e) = &result {
+                    tracing::warn!(
+                        "Failed to save conversation history to {}: {e}",
+                        filepath.display()
+                    );
+                }
+                result
             });
+            if let Ok(mut task) = self.save_task.lock() {
+                *task = Some(handle);
+            }
+        }
+    }
+
+    /// Await the most recent background save spawned by [`Self::push`] and surface its result.
+    ///
+    /// Each `push` to a conversation with a save path spawns a detached save task; this awaits the
+    /// latest one so a caller can make sure the history reached disk (and observe a write failure)
+    /// before shutting down. Returns `Ok(())` when there is no save in flight.
+    pub async fn flush(&self) -> Result<(), ConversationError> {
+        let handle = self.save_task.lock().ok().and_then(|mut task| task.take());
+        match handle {
+            Some(handle) => handle
+                .await
+                .map_err(|e| ConversationError::SaveTaskJoin(e.to_string()))?,
+            None => Ok(()),
         }
     }
 
@@ -403,5 +440,48 @@ impl From<&AgentConversation> for Vec<crate::llm::completion::Message> {
                 },
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `save_filepath` is private with no public setter, so these tests set it directly to drive
+    // the save branch in `push`.
+
+    #[tokio::test]
+    async fn push_save_error_is_surfaced_via_flush() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Make an ancestor of the save path an existing file, so `create_dir_all` fails
+        // deterministically and the spawned save returns an error.
+        let blocker = dir.path().join("blocker");
+        std::fs::File::create(&blocker).unwrap();
+        let bad_path = blocker.join("sub").join("history.json");
+
+        let mut conv = AgentConversation::new("tester".to_string());
+        conv.save_filepath = Some(bad_path);
+        conv.add(Role::User("user".to_string()), "hello".to_string());
+
+        let result = conv.flush().await;
+        assert!(
+            result.is_err(),
+            "a failing save must be surfaced via flush, not silently dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_save_success_is_flushable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("history.json");
+
+        let mut conv = AgentConversation::new("tester".to_string());
+        conv.save_filepath = Some(path.clone());
+        conv.add(Role::User("user".to_string()), "hello".to_string());
+
+        conv.flush()
+            .await
+            .expect("a successful save should flush cleanly");
+        assert!(path.exists(), "the history file should be written to disk");
     }
 }
