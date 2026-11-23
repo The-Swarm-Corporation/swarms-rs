@@ -900,12 +900,6 @@ where
     handoffs: HashMap<String, Arc<dyn Agent>>,
 }
 
-/// Render a rounded, single-column panel as a string.
-///
-/// The `title` becomes the first (centered) row and each entry in `rows`
-/// becomes one body row, matching the styling shared by the agent's
-/// pretty-print helpers. Kept free of `self`/`M` so it can be unit-tested
-/// without constructing a [`SwarmsAgent`].
 fn build_panel(title: &str, rows: &[String]) -> String {
     let mut builder = Builder::default();
     builder.push_record(vec![title.to_string()]);
