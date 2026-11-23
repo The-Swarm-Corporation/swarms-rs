@@ -2,12 +2,14 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use chrono::Local;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::task::JoinHandle;
 
 use crate::structs::{
     persistence::{self, PersistenceError},
@@ -22,7 +24,11 @@ pub enum ConversationError {
     FilePersistenceError(#[from] PersistenceError),
     #[error("Invalid conversation format: {0}")]
     InvalidFormat(String),
+    #[error("Save task join error: {0}")]
+    SaveTaskJoin(String),
 }
+
+type SaveTask = Arc<Mutex<Option<JoinHandle<Result<(), ConversationError>>>>>;
 
 #[derive(Clone, Serialize)]
 pub struct AgentShortMemory(pub DashMap<Task, AgentConversation>);
@@ -77,6 +83,8 @@ pub struct AgentConversation {
     save_filepath: Option<PathBuf>,
     pub history: Vec<Message>,
     max_messages: Option<usize>,
+    #[serde(skip)]
+    save_task: SaveTask,
 }
 
 impl AgentConversation {
@@ -86,6 +94,7 @@ impl AgentConversation {
             save_filepath: None,
             history: Vec::new(),
             max_messages: Some(1_000_000), // Default maximum messages
+            save_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -96,6 +105,7 @@ impl AgentConversation {
             save_filepath: None,
             history: Vec::new(),
             max_messages,
+            save_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -150,10 +160,29 @@ impl AgentConversation {
         if let Some(filepath) = &self.save_filepath {
             let filepath = filepath.clone();
             let history = self.history.clone();
-            tokio::spawn(async move {
-                let history = history;
-                let _ = Self::save_as_json(&filepath, &history).await;
+            let handle = tokio::spawn(async move {
+                let result = Self::save_as_json(&filepath, &history).await;
+                if let Err(e) = &result {
+                    tracing::warn!(
+                        "Failed to save conversation history to {}: {e}",
+                        filepath.display()
+                    );
+                }
+                result
             });
+            if let Ok(mut task) = self.save_task.lock() {
+                *task = Some(handle);
+            }
+        }
+    }
+
+    pub async fn flush(&self) -> Result<(), ConversationError> {
+        let handle = self.save_task.lock().ok().and_then(|mut task| task.take());
+        match handle {
+            Some(handle) => handle
+                .await
+                .map_err(|e| ConversationError::SaveTaskJoin(e.to_string()))?,
+            None => Ok(()),
         }
     }
 
