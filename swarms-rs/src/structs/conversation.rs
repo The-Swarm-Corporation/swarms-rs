@@ -203,14 +203,6 @@ impl AgentConversation {
         Ok(())
     }
 
-    // TODO: We don't need this function now
-    // Load the conversation history from a JSON file.
-    // async fn load_from_json(&self, filepath: &Path) -> Result<Vec<Message>, ConversationError> {
-    //     let data = persistence::load_from_file(filepath).await?;
-    //     let history = serde_json::from_slice(&data)?;
-    //     Ok(history)
-    // }
-
     /// Export the conversation history to a file
     pub async fn export_to_file(&self, filepath: &Path) -> Result<(), ConversationError> {
         let data = self.to_string();
