@@ -129,7 +129,9 @@ use crate::{
 
 use crate::structs::agent::{Agent, AgentConfig, AgentError};
 
-use super::delegation::{HandoffArgs, HandoffTool, SubAgentTool, is_valid_tool_name, tool_name_for};
+use super::delegation::{
+    HandoffArgs, HandoffTool, SubAgentTool, is_valid_tool_name, tool_name_for,
+};
 
 // Kept at its original path; it lives in `structs::tool` so conversations can store it.
 pub use crate::structs::tool::ToolCallOutput;
