@@ -10,10 +10,11 @@ use serde_json::json;
 use swarms_macro::tool;
 use swarms_rs::agent::{SwarmsAgent, SwarmsAgentBuilder, ToolCallOutput};
 use swarms_rs::llm::completion::{AssistantContent, Message, UserContent};
-use swarms_rs::llm::request::{CompletionRequest, CompletionResponse};
+use swarms_rs::llm::request::{CompletionRequest, CompletionResponse, ToolDefinition};
 use swarms_rs::llm::{CompletionError, Model};
 use swarms_rs::structs::agent::Agent;
 use swarms_rs::structs::conversation::{AgentConversation, Content, Role};
+use swarms_rs::structs::tool::Tool;
 
 #[derive(Debug, thiserror::Error)]
 #[error("test tool error")]
@@ -332,6 +333,56 @@ async fn delegation_tool_names_are_valid_and_unique() {
 #[tool(description = "Add two numbers")]
 fn add_numbers(a: i64, b: i64) -> Result<i64, TestError> {
     Ok(a + b)
+}
+
+struct BadNameTool;
+
+impl Tool for BadNameTool {
+    type Error = TestError;
+    type Args = serde_json::Value;
+    type Output = String;
+
+    const NAME: &'static str = "bad name!";
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "a tool whose name providers reject".to_string(),
+            parameters: json!({"type": "object", "properties": {}}),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok("unused".to_string())
+    }
+}
+
+#[tokio::test]
+async fn register_tool_rejects_invalid_tool_names() {
+    let model = ScriptedModel::new(vec![], "done");
+    let agent = agent("Gatekeeper", model.clone())
+        .add_tool(BadNameTool)
+        .add_tool(AddNumbers)
+        .build();
+
+    agent.run("hi".to_string()).await.unwrap();
+
+    // The bad name is never offered to the model, but the valid tool still is.
+    assert!(!is_valid_tool_name(BadNameTool::NAME));
+    assert!(is_valid_tool_name("add_numbers"));
+    let offered = model.tools.lock().unwrap()[0].clone();
+    assert!(
+        !offered.contains(&BadNameTool::NAME.to_string()),
+        "invalid tool name reached the model: {offered:?}"
+    );
+    assert!(
+        offered.contains(&"add_numbers".to_string()),
+        "valid tool was not offered: {offered:?}"
+    );
+    assert!(
+        offered.iter().all(|name| is_valid_tool_name(name)),
+        "{offered:?}"
+    );
 }
 
 #[tokio::test]
