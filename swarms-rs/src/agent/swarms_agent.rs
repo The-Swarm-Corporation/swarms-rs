@@ -900,6 +900,20 @@ where
     handoffs: HashMap<String, Arc<dyn Agent>>,
 }
 
+fn build_panel(title: &str, rows: &[String]) -> String {
+    let mut builder = Builder::default();
+    builder.push_record(vec![title.to_string()]);
+    for row in rows {
+        builder.push_record(vec![row.clone()]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.with(Modify::new(Rows::first()).with(Alignment::center()));
+
+    table.to_string()
+}
+
 impl<M> SwarmsAgent<M>
 where
     M: llm::Model + Clone + Send + Sync + 'static,
@@ -908,15 +922,10 @@ where
     /// Print agent thinking/output in a panel
     fn print_agent_output(&self, content: &str) {
         if self.config.pretty_print_on {
-            let mut builder = Builder::default();
-            builder.push_record(vec![format!("🤖 Agent: {} Output", self.config.name)]);
-            builder.push_record(vec![content]);
+            let title = format!("🤖 Agent: {} Output", self.config.name);
+            let rows = vec![content.to_string()];
 
-            let mut table = builder.build();
-            table.with(Style::rounded());
-            table.with(Modify::new(Rows::first()).with(Alignment::center()));
-
-            println!("{}", table);
+            println!("{}", build_panel(&title, &rows));
         } else {
             println!("🤖 Agent: {}", content);
         }
@@ -925,20 +934,14 @@ where
     /// Print tool execution in a panel
     fn print_tool_execution(&self, tool_name: &str, args: &str, result: &str) {
         if self.config.pretty_print_on {
-            let mut builder = Builder::default();
-            builder.push_record(vec![format!(
-                "🔧 Agent: {} - Tool Execution",
-                self.config.name
-            )]);
-            builder.push_record(vec![format!("📝 Tool: {}", tool_name)]);
-            builder.push_record(vec![format!("📝 Arguments: {}", args)]);
-            builder.push_record(vec![format!("✅ Result: {}", result)]);
+            let title = format!("🔧 Agent: {} - Tool Execution", self.config.name);
+            let rows = vec![
+                format!("📝 Tool: {}", tool_name),
+                format!("📝 Arguments: {}", args),
+                format!("✅ Result: {}", result),
+            ];
 
-            let mut table = builder.build();
-            table.with(Style::rounded());
-            table.with(Modify::new(Rows::first()).with(Alignment::center()));
-
-            println!("{}", table);
+            println!("{}", build_panel(&title, &rows));
         } else {
             println!("🔧 Tool {} executed with args: {}", tool_name, args);
             println!("✅ Result: {}", result);
@@ -948,22 +951,16 @@ where
     /// Print task completion in a panel
     fn print_task_complete(&self, task: &str, result: &str) {
         if self.config.pretty_print_on {
-            let mut builder = Builder::default();
-            builder.push_record(vec![format!(
-                "🎯 Agent: {} - Task Completed",
-                self.config.name
-            )]);
-            builder.push_record(vec![format!("📋 Task: {}", task)]);
-            builder.push_record(vec![format!(
-                "📋 Result: {}",
-                result.chars().take(100).collect::<String>()
-            )]);
+            let title = format!("🎯 Agent: {} - Task Completed", self.config.name);
+            let rows = vec![
+                format!("📋 Task: {}", task),
+                format!(
+                    "📋 Result: {}",
+                    result.chars().take(100).collect::<String>()
+                ),
+            ];
 
-            let mut table = builder.build();
-            table.with(Style::rounded());
-            table.with(Modify::new(Rows::first()).with(Alignment::center()));
-
-            println!("{}", table);
+            println!("{}", build_panel(&title, &rows));
         } else {
             println!("🎯 Task '{}' completed!", task);
             println!("📋 Result: {}", result);
