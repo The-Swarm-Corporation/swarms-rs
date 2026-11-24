@@ -551,12 +551,28 @@ mod tests {
         workflow.connect_agents("b", "c", Flow::default()).unwrap();
 
         // no cycles, should return empty vector
-        let deadlocks = workflow.detect_potential_deadlocks();
+        let deadlocks = workflow.detect_potential_deadlocks().unwrap();
         assert_eq!(deadlocks.len(), 0);
 
         // try to add c -> a, which should fail because has_cycle prevents it
         let result = workflow.connect_agents("c", "a", Flow::default());
         assert!(matches!(result, Err(GraphWorkflowError::CycleDetected)));
+    }
+
+    #[test]
+    fn test_detect_potential_deadlocks_returns_ok() {
+        let mut workflow = DAGWorkflow::new("test", "Test workflow");
+        workflow.register_agent(create_mock_agent("1", "a", "Agent A", "a"));
+        workflow.register_agent(create_mock_agent("2", "b", "Agent B", "b"));
+        workflow.register_agent(create_mock_agent("3", "c", "Agent C", "c"));
+
+        // a -> b -> c (acyclic)
+        workflow.connect_agents("a", "b", Flow::default()).unwrap();
+        workflow.connect_agents("b", "c", Flow::default()).unwrap();
+
+        let result = workflow.detect_potential_deadlocks();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[test]
