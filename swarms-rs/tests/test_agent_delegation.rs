@@ -146,8 +146,9 @@ async fn sub_agent_runs_and_parent_keeps_control() {
     assert!(sub_model.requests.lock().unwrap()[0].contains("compute 6 * 7"));
     // The sub-agent's answer comes back as the tool result, and the parent carries on.
     assert_eq!(parent_model.calls(), 2);
-    assert!(output.contains("sub answer: 42"), "{output}");
-    assert!(output.contains("final answer uses 42"), "{output}");
+    assert_eq!(output, "final answer uses 42");
+    let transcript = parent.conversation("What is 6 * 7?").unwrap().to_string();
+    assert!(transcript.contains("sub answer: 42"), "{transcript}");
 }
 
 #[tokio::test]
@@ -248,10 +249,11 @@ async fn only_the_first_handoff_in_a_turn_runs() {
     let output = router.run("route me".to_string()).await.unwrap();
     assert_eq!(first_model.calls(), 1);
     assert_eq!(second_model.calls(), 0);
-    assert!(output.contains("first handled it"), "{output}");
+    assert_eq!(output, "first handled it");
+    let transcript = router.conversation("route me").unwrap().to_string();
     assert!(
-        output.contains("Not run: only one handoff runs per turn"),
-        "{output}"
+        transcript.contains("Not run: only one handoff runs per turn"),
+        "{transcript}"
     );
 }
 
@@ -274,11 +276,12 @@ async fn failed_handoff_keeps_control() {
 
     let output = parent.run("task".to_string()).await.unwrap();
     assert_eq!(parent_model.calls(), 2);
+    assert_eq!(output, "handled it myself");
+    let transcript = parent.conversation("task").unwrap().to_string();
     assert!(
-        output.contains("Handoff to 'Specialist' failed"),
-        "{output}"
+        transcript.contains("Handoff to 'Specialist' failed"),
+        "{transcript}"
     );
-    assert!(output.contains("handled it myself"), "{output}");
 }
 
 #[tokio::test]
@@ -533,8 +536,12 @@ async fn text_sent_with_a_handoff_reaches_the_target() {
     let source = agent("Source", source_model).add_handoff(target).build();
 
     let output = source.run("help".to_string()).await.unwrap();
-    assert!(output.contains("I found the order id: 991"), "{output}");
-    assert!(output.contains("target answer"), "{output}");
+    assert_eq!(output, "target answer");
+    let transcript = source.conversation("help").unwrap().to_string();
+    assert!(
+        transcript.contains("I found the order id: 991"),
+        "{transcript}"
+    );
     let received = target_model.requests.lock().unwrap()[0].clone();
     assert!(received.contains("I found the order id: 991"), "{received}");
 }

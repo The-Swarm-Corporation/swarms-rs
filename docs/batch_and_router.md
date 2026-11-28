@@ -69,7 +69,7 @@ The limit is chosen in that order, and a value of 0 is treated as 1.
 
 `execute_batch(tasks)` returns `Result<DashMap<String, AgentConversation>, BatchExecutionError>`:
 
-- The key is the task text. The conversation has one `Role::Assistant(agent name)` message per agent that succeeded, in agent order. Each message's content is that agent's full output: for a `SwarmsAgent`, the transcript of its run.
+- The key is the task text. The conversation has one `Role::Assistant(agent name)` message per agent that succeeded, in agent order. Each message's content is that agent's final reply.
 - If an agent fails on a task, the error is logged and that agent is left out. A task where every agent failed is missing from the map, so compare the map's keys with your task list to spot failures. If nothing succeeded at all, the call returns `Err(BatchExecutionError::AgentError(..))` with the last error.
 - Repeating a task in the input runs it again and adds the new answers to the same conversation.
 - `BatchExecutionError::NoAgents` and `NoTasks` are returned for an executor without agents or an empty task list.
