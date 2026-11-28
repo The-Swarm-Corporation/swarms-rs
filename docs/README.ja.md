@@ -22,7 +22,7 @@
 
 ## 🌐 対応言語
 
-- [English](README.md)
+- [English](../README.md)
 - [日本語](README.ja.md)
 - [中文](README.zh.md)
 
@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-[mcp_tool.rs](swarms-rs/examples/mcp_tool.rs)の例を参照して、完全な実装を確認してください。
+[mcp_tool.rs](../swarms-rs/examples/single_agent/mcp_tool.rs)の例を参照して、完全な実装を確認してください。
 
 ## マルチエージェントアーキテクチャ
 
@@ -376,7 +376,7 @@ async fn main() -> Result<()> {
 
 ## サンプルコードの実行
 
-[swarms-rs/examples](swarms-rs/examples/)には、かなりの程度の参考となるサンプルコードがあります：
+[swarms-rs/examples](../swarms-rs/examples/)には、かなりの程度の参考となるサンプルコードがあります：
 
 グラフワークフローの例を実行するには：
 
@@ -426,7 +426,7 @@ cargo run --example graph_workflow
 
 ## ライセンス
 
-このプロジェクトはMITライセンスの下でライセンスされています - 詳細は[LICENSE](LICENSE)ファイルを参照してください。
+このプロジェクトはApache-2.0ライセンスの下でライセンスされています - 詳細は[LICENSE](../LICENSE)ファイルを参照してください。
 
 ## 連絡先
 

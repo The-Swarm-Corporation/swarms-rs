@@ -434,7 +434,7 @@ async fn main() -> Result<()> {
 ```
 
 
-See the [mcp_tool.rs](swarms-rs/examples/mcp_tool.rs) example for a complete implementation.
+See the [mcp_tool.rs](swarms-rs/examples/single_agent/mcp_tool.rs) example for a complete implementation.
 
 -----------
 
@@ -757,8 +757,6 @@ We welcome contributions from the community! Whether you're fixing bugs, improvi
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-For more details, please read our [Contributing Guidelines](CONTRIBUTING.md).
-
 ### Join Our Discord
 
 Join our [Discord community](https://discord.gg/EamjgSaEQf) to:
@@ -775,7 +773,7 @@ We're excited to have you join our growing community! 🌟
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
 
 --------
 
