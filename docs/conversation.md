@@ -13,20 +13,13 @@
 
 ## Messages
 
-`add` stores the text with a timestamp line in front of it, so every message's content looks like this:
-
-```text
-Timestamp(millis): 1790697587441 
-Hello
-```
+`add` stores the raw message text in `content` and records the creation time in `Message.timestamp_millis`.
 
 Printing a conversation (`Display`, or `to_string()`) writes each message as `Name(Role): content`:
 
 ```text
-Alice(User): Timestamp(millis): 1790697587441 
-Hello
-Bot(Assistant): Timestamp(millis): 1790697587442 
-Hi there
+Alice(User): Hello
+Bot(Assistant): Hi there
 ```
 
 ## Working with a conversation
@@ -64,7 +57,7 @@ fn main() {
 }
 ```
 
-`query`, `update` and `delete` panic if the index is out of range, like indexing a `Vec`. Check `history.len()` first when the index comes from outside your code. `search` matches against the full content, including the timestamp line, so searching for `"Timestamp"` matches every message.
+`query`, `update` and `delete` panic if the index is out of range, like indexing a `Vec`. Check `history.len()` first when the index comes from outside your code. `search` matches against each message's rendered content.
 
 ## Limiting the number of messages
 
@@ -125,7 +118,7 @@ fn main() -> anyhow::Result<()> {
     let mut conversation = AgentConversation::new("notes".to_string());
     conversation.add(Role::User("Alice".to_string()), "Hello".to_string());
 
-    // [{"role":{"User":"Alice"},"content":{"Text":"Timestamp(millis): ... \nHello"}}]
+    // [{"role":{"User":"Alice"},"content":{"Text":"Hello"},"timestamp_millis":...}]
     let json = conversation.to_json()?;
 
     let mut restored = AgentConversation::new("notes".to_string());
@@ -159,7 +152,7 @@ fn main() {
 
 Because memory is keyed by task text, running the same task string twice on the same agent continues the earlier conversation instead of starting a new one. Use distinct task strings, or a new agent, when you want a fresh start.
 
-To send a conversation to a model yourself, convert it: `let messages: Vec<swarms_rs::llm::completion::Message> = (&conversation).into();`. Each message becomes a user or assistant message whose text is `name: content`.
+To send a conversation to a model yourself, convert it: `let messages: Vec<swarms_rs::llm::completion::Message> = (&conversation).into();`. Each message carries its raw content without timestamps; role-name prefixes (`name: content`) are added only when a conversation contains multiple speakers of that role (such as multi-agent transcripts).
 
 ## Typed tool results
 
@@ -196,7 +189,6 @@ It can't be deserialized, and it has no size limit.
 ## Known limitations
 
 - `query`, `update` and `delete` panic on an out-of-range index.
-- Content always includes the timestamp line added by `add`; strip the first line if you need the bare text.
 - The text format can misread message lines that look like headers; prefer JSON for arbitrary text.
 - A whole `AgentConversation` can't be deserialized; `to_json` and `load_json` carry the history only.
 - Agent memory is keyed by task text, so a repeated task reuses its old conversation.

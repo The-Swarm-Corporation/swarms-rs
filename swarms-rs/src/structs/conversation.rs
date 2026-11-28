@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Display,
     path::{Path, PathBuf},
 };
@@ -101,17 +101,14 @@ impl AgentConversation {
 
     /// Add a message to the conversation history.
     pub fn add(&mut self, role: Role, message: String) {
-        let timestamp = Local::now().timestamp_millis();
         self.push(Message {
             role,
-            content: Content::Text(format!("Timestamp(millis): {timestamp} \n{message}")),
+            content: Content::Text(message),
+            timestamp_millis: Some(Local::now().timestamp_millis()),
         });
     }
 
-    /// Add one turn of tool calls, keeping each call's typed output, along with any `text`
-    /// the model wrote in the same reply. Its text form (used by `Display`,
-    /// [`Self::export_to_file`] and the LLM history) matches what [`Self::add`] would store
-    /// for the text followed by the formatted results.
+    /// Add one turn of tool calls alongside optional assistant text.
     pub fn add_tool_calls(
         &mut self,
         role: Role,
@@ -121,10 +118,10 @@ impl AgentConversation {
         self.push(Message {
             role,
             content: Content::ToolCalls {
-                timestamp_millis: Local::now().timestamp_millis(),
                 text: text.filter(|t| !t.trim().is_empty()),
                 outputs,
             },
+            timestamp_millis: Some(Local::now().timestamp_millis()),
         });
     }
 
@@ -164,7 +161,12 @@ impl AgentConversation {
 
     /// Update a message in the conversation history.
     pub fn update(&mut self, index: usize, role: Role, content: Content) {
-        self.history[index] = Message { role, content };
+        let timestamp_millis = self.history[index].timestamp_millis;
+        self.history[index] = Message {
+            role,
+            content,
+            timestamp_millis,
+        };
     }
 
     /// Query a message in the conversation history.
@@ -237,6 +239,7 @@ impl AgentConversation {
                 (Some((role, content)), _) => history.push(Message {
                     role,
                     content: Content::Text(content.to_string()),
+                    timestamp_millis: None,
                 }),
                 // Imported messages are always text (the text export doesn't keep tool-call
                 // structure; `to_json` does).
@@ -277,10 +280,12 @@ impl Display for AgentConversation {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub role: Role,
     pub content: Content,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_millis: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -292,11 +297,8 @@ pub enum Role {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Content {
     Text(String),
-    /// The tool calls an agent made in one turn, kept structured so workflows can read the
-    /// results back without parsing. Displays as the same text the agent sends to the LLM:
-    /// any text the model wrote with the calls, then one block per call.
+    /// Structured tool calls made in one assistant turn, paired with optional reply text.
     ToolCalls {
-        timestamp_millis: i64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         outputs: Vec<ToolCallOutput>,
@@ -327,11 +329,10 @@ impl Display for Content {
         match self {
             Content::Text(text) => f.pad(text),
             Content::ToolCalls {
-                timestamp_millis,
                 text: reply,
                 outputs,
             } => {
-                let mut text = format!("Timestamp(millis): {timestamp_millis} \n");
+                let mut text = String::new();
                 if let Some(reply) = reply {
                     text.push_str(reply);
                     text.push_str("\n\n");
@@ -384,14 +385,39 @@ pub struct AgentLog {
 
 impl From<&AgentConversation> for Vec<crate::llm::completion::Message> {
     fn from(conv: &AgentConversation) -> Self {
+        let mut user_names = HashSet::new();
+        let mut assistant_names = HashSet::new();
+        for msg in &conv.history {
+            match &msg.role {
+                Role::User(name) => {
+                    user_names.insert(name.as_str());
+                },
+                Role::Assistant(name) => {
+                    assistant_names.insert(name.as_str());
+                },
+            }
+        }
+        let prefix_user = user_names.len() > 1;
+        let prefix_assistant = assistant_names.len() > 1;
+
         conv.history
             .iter()
             .map(|msg| match &msg.role {
                 Role::User(name) => {
-                    crate::llm::completion::Message::user(format!("{}: {}", name, msg.content))
+                    let text = if prefix_user {
+                        format!("{name}: {}", msg.content)
+                    } else {
+                        msg.content.to_string()
+                    };
+                    crate::llm::completion::Message::user(text)
                 },
                 Role::Assistant(name) => {
-                    crate::llm::completion::Message::assistant(format!("{}: {}", name, msg.content))
+                    let text = if prefix_assistant {
+                        format!("{name}: {}", msg.content)
+                    } else {
+                        msg.content.to_string()
+                    };
+                    crate::llm::completion::Message::assistant(text)
                 },
             })
             .collect()

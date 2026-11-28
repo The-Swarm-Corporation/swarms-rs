@@ -298,3 +298,54 @@ async fn duplicate_tool_names_are_offered_once() {
         "{names:?}"
     );
 }
+
+#[tokio::test]
+async fn agent_sends_raw_task_without_timestamp_or_role_prefix() {
+    #[derive(Clone, Default)]
+    struct CaptureModel {
+        histories: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+
+    impl Model for CaptureModel {
+        type RawCompletionResponse = ();
+
+        fn completion(
+            &self,
+            request: CompletionRequest,
+        ) -> BoxFuture<'_, Result<CompletionResponse<()>, CompletionError>> {
+            Box::pin(async move {
+                self.histories.lock().unwrap().push(request.chat_history);
+                Ok(CompletionResponse {
+                    choice: vec![AssistantContent::text("ok")],
+                    raw_response: (),
+                })
+            })
+        }
+    }
+
+    let model = CaptureModel::default();
+    let histories = Arc::clone(&model.histories);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("CleanAgent")
+        .max_loops(2)
+        .build();
+
+    agent
+        .run("Explain mutexes vs semaphores".to_string())
+        .await
+        .unwrap();
+
+    let captured = histories.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    assert_eq!(
+        captured[0],
+        vec![Message::user("Explain mutexes vs semaphores")]
+    );
+    assert_eq!(
+        captured[1],
+        vec![
+            Message::user("Explain mutexes vs semaphores"),
+            Message::assistant("ok"),
+        ]
+    );
+}
