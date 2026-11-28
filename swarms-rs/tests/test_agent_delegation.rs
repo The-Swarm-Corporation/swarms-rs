@@ -13,7 +13,7 @@ use swarms_rs::llm::completion::{AssistantContent, Message, UserContent};
 use swarms_rs::llm::request::{CompletionRequest, CompletionResponse, ToolDefinition};
 use swarms_rs::llm::{CompletionError, Model};
 use swarms_rs::structs::agent::Agent;
-use swarms_rs::structs::conversation::{AgentConversation, Content, Role};
+use swarms_rs::structs::conversation::{AgentConversation, Role};
 use swarms_rs::structs::tool::Tool;
 
 #[derive(Debug, thiserror::Error)]
@@ -410,14 +410,6 @@ async fn tool_outputs_are_kept_typed_in_the_conversation() {
     assert!(agent.conversation("never ran").is_none());
 }
 
-/// The part after the `Timestamp(millis): N ` line.
-fn after_timestamp(content: &Content) -> String {
-    let text = content.to_string();
-    let (first, rest) = text.split_once('\n').unwrap();
-    assert!(first.starts_with("Timestamp(millis): "), "{first}");
-    rest.to_string()
-}
-
 #[tokio::test]
 async fn tool_call_turns_render_the_same_text_as_before() {
     let outputs = vec![
@@ -445,27 +437,21 @@ async fn tool_call_turns_render_the_same_text_as_before() {
     let mut plain = AgentConversation::new("Agent".into());
     plain.add(role, formatted);
 
-    // Display, and the history sent to the LLM, match what plain text storage produced.
+    assert!(typed.history[0].timestamp_millis.is_some());
     assert_eq!(
-        after_timestamp(&typed.history[0].content),
-        after_timestamp(&plain.history[0].content)
+        typed.history[0].content.to_string(),
+        plain.history[0].content.to_string()
     );
     let typed_llm: Vec<Message> = (&typed).into();
     let plain_llm: Vec<Message> = (&plain).into();
-    let strip = |m: &Message| {
-        let text = message_text(m);
-        text.split_once('\n').unwrap().1.to_string()
-    };
-    assert_eq!(strip(&typed_llm[0]), strip(&plain_llm[0]));
+    assert_eq!(typed_llm, plain_llm);
 
-    // JSON keeps the structure.
     let json = typed.to_json().unwrap();
     let restored: Vec<swarms_rs::structs::conversation::Message> =
         serde_json::from_str(&json).unwrap();
     assert_eq!(restored[0].content, typed.history[0].content);
     assert_eq!(restored[0].content.tool_outputs(), outputs.as_slice());
 
-    // The text export keeps the text (as a text message).
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("conversation.txt");
     typed.export_to_file(&path).await.unwrap();

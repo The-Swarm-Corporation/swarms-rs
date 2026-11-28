@@ -274,6 +274,7 @@ fn test_message_creation() {
     let message = Message {
         role: Role::User("User".to_string()),
         content: Content::Text("Test".to_string()),
+        timestamp_millis: None,
     };
 
     assert!(matches!(message.role, Role::User(_)));
@@ -367,10 +368,11 @@ fn test_agent_conversation_message_timestamps() {
 
     conversation.add(Role::User("User".to_string()), "Message 1".to_string());
 
-    // Check that the message contains a timestamp
+    assert!(conversation.history[0].timestamp_millis.is_some());
     match &conversation.history[0].content {
         Content::Text(text) => {
-            assert!(text.contains("Timestamp(millis):"));
+            assert_eq!(text, "Message 1");
+            assert!(!text.contains("Timestamp(millis):"));
         },
         other => panic!("expected text content, got {other:?}"),
     }
@@ -410,11 +412,11 @@ fn test_message_clone() {
     let message1 = Message {
         role: Role::User("User".to_string()),
         content: Content::Text("Test".to_string()),
+        timestamp_millis: Some(42),
     };
     let message2 = message1.clone();
 
-    assert_eq!(message1.role, message2.role);
-    assert_eq!(message1.content, message2.content);
+    assert_eq!(message1, message2);
 }
 
 #[test]

@@ -36,13 +36,13 @@ fn test_agent_conversation_add_message() {
     );
     assert_eq!(conversation.history.len(), 2);
 
-    // Check that timestamps are added
     let first_message = &conversation.history[0];
+    assert!(first_message.timestamp_millis.is_some());
     let Content::Text(ref text) = first_message.content else {
         panic!("expected text content")
     };
-    assert!(text.contains("Timestamp(millis):"));
-    assert!(text.contains("Hello"));
+    assert_eq!(text, "Hello");
+    assert!(!text.contains("Timestamp(millis):"));
 }
 
 #[test]
@@ -258,9 +258,11 @@ fn test_message_creation() {
     let message = Message {
         role: Role::User("test_user".to_string()),
         content: Content::Text("Test content".to_string()),
+        timestamp_millis: Some(1_700_000_000_000),
     };
 
     assert_eq!(message.role, Role::User("test_user".to_string()));
+    assert_eq!(message.timestamp_millis, Some(1_700_000_000_000));
     let Content::Text(text) = message.content else {
         panic!("expected text content")
     };
@@ -386,10 +388,55 @@ fn test_agent_conversation_to_completion_messages() {
     );
 
     let completion_messages: Vec<swarms_rs::llm::completion::Message> = (&conversation).into();
-    assert_eq!(completion_messages.len(), 2);
+    assert_eq!(
+        completion_messages,
+        vec![
+            swarms_rs::llm::completion::Message::user("Hello"),
+            swarms_rs::llm::completion::Message::assistant("Hi there"),
+        ]
+    );
+}
 
-    // The actual content will include timestamps, so we just check that conversion works
-    assert!(!completion_messages.is_empty());
+#[test]
+fn test_multi_agent_conversation_keeps_assistant_role_prefixes_for_llm() {
+    let mut conversation = AgentConversation::new("workflow".to_string());
+    conversation.add(Role::User("User".to_string()), "Summarize Rust".to_string());
+    conversation.add(
+        Role::Assistant("Researcher".to_string()),
+        "Memory safe.".to_string(),
+    );
+    conversation.add(
+        Role::Assistant("Writer".to_string()),
+        "Rust ensures memory safety.".to_string(),
+    );
+
+    let completion_messages: Vec<swarms_rs::llm::completion::Message> = (&conversation).into();
+    assert_eq!(
+        completion_messages,
+        vec![
+            swarms_rs::llm::completion::Message::user("Summarize Rust"),
+            swarms_rs::llm::completion::Message::assistant("Researcher: Memory safe."),
+            swarms_rs::llm::completion::Message::assistant("Writer: Rust ensures memory safety."),
+        ]
+    );
+}
+
+#[test]
+fn test_multi_user_conversation_keeps_user_role_prefixes_for_llm() {
+    let mut conversation = AgentConversation::new("group".to_string());
+    conversation.add(Role::User("Alice".to_string()), "Hi".to_string());
+    conversation.add(Role::User("Bob".to_string()), "Hello".to_string());
+    conversation.add(Role::Assistant("Bot".to_string()), "Hey all".to_string());
+
+    let completion_messages: Vec<swarms_rs::llm::completion::Message> = (&conversation).into();
+    assert_eq!(
+        completion_messages,
+        vec![
+            swarms_rs::llm::completion::Message::user("Alice: Hi"),
+            swarms_rs::llm::completion::Message::user("Bob: Hello"),
+            swarms_rs::llm::completion::Message::assistant("Hey all"),
+        ]
+    );
 }
 
 #[test]
@@ -419,14 +466,18 @@ fn test_message_serialization() {
     let message = Message {
         role: Role::User("test_user".to_string()),
         content: Content::Text("Test message".to_string()),
+        timestamp_millis: Some(1_700_000_000_000),
     };
 
-    // Test that messages can be serialized and deserialized
     let json = serde_json::to_string(&message).unwrap();
     let deserialized: Message = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(message.role, deserialized.role);
-    assert_eq!(message.content, deserialized.content);
+    assert_eq!(message, deserialized);
+
+    let legacy_json = r#"{"role":{"User":"test_user"},"content":{"Text":"Test message"}}"#;
+    let legacy: Message = serde_json::from_str(legacy_json).unwrap();
+    assert_eq!(legacy.timestamp_millis, None);
+    assert_eq!(legacy.content, Content::Text("Test message".to_string()));
 }
 
 #[test]
