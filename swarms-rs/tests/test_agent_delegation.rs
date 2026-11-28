@@ -483,7 +483,10 @@ async fn text_sent_with_task_evaluator_is_kept_as_the_answer() {
         ])],
         "should not be reached",
     );
-    let agent = agent("Solver", model.clone()).max_loops(3).build();
+    let agent = agent("Solver", model.clone())
+        .enable_task_evaluator()
+        .max_loops(3)
+        .build();
 
     let output = agent.run("answer".to_string()).await.unwrap();
     assert_eq!(model.calls(), 1);

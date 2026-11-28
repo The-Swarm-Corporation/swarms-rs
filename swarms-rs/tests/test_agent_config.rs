@@ -283,7 +283,7 @@ fn test_agent_config_default_values() {
     assert!(!config.rag_every_loop);
     assert_eq!(config.save_state_dir, None);
     assert!(config.stop_words.is_empty());
-    assert!(config.task_evaluator_tool_enabled);
+    assert!(!config.task_evaluator_tool_enabled);
     assert!(config.concurrent_tool_call_enabled);
     assert!(!config.verbose);
     assert!(!config.pretty_print_on);
@@ -298,6 +298,16 @@ fn test_agent_config_pretty_print() {
         .build();
 
     assert!(config.pretty_print_on);
+}
+
+#[test]
+fn test_agent_config_enable_task_evaluator() {
+    let config = AgentConfig::builder()
+        .agent_name("EvaluatorAgent")
+        .enable_task_evaluator()
+        .build();
+
+    assert!(config.task_evaluator_tool_enabled);
 }
 
 #[test]
