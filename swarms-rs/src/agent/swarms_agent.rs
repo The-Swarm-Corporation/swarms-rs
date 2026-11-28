@@ -1488,7 +1488,7 @@ where
             // Run agent loop
             let mut last_response_text = String::new();
             let mut task_complete = false;
-            let mut was_prev_call_task_evaluator = false;
+            let mut evaluator_context: Option<String> = None;
 
             if self.config.verbose {
                 log_agent!(
@@ -1528,14 +1528,12 @@ where
 
                 let current_prompt: String;
 
-                if was_prev_call_task_evaluator {
+                if let Some(context) = evaluator_context.take() {
                     current_prompt = format!(
                         "You previously called task_evaluator and indicated the task was not complete. The required next step or context provided was: '{}'. \
                         Focus ONLY on addressing this context. DO NOT call task_evaluator again in this turn. Proceed with the task based on the context.",
-                        last_response_text // last_response is the context provided by task_evaluator
+                        context
                     );
-
-                    was_prev_call_task_evaluator = false;
                 } else if loop_count > 0 {
                     current_prompt = format!(
                         "Now, you are in loop {} of {}, The dialogue will terminate upon reaching maximum iteration count. You must:
@@ -1619,17 +1617,14 @@ where
                                 .run_handoff(&task, reply_text.as_deref(), &mut tool_calls)
                                 .await;
 
-                            let mut formatted_tool_results = String::new();
+                            let mut non_evaluator_tool_results = String::new();
                             for tool_call in &tool_calls {
-                                // Pretty print tool execution
                                 self.print_tool_execution(
                                     &tool_call.name,
                                     &tool_call.args,
                                     &tool_call.result,
                                 );
 
-                                let formatted = tool_call.to_string();
-                                formatted_tool_results.push_str(&formatted);
                                 if tool_call.name == ToolDyn::name(&TaskEvaluator) {
                                     is_task_evaluator_called = true;
                                     match serde_json::from_str::<TaskStatus>(&tool_call.result) {
@@ -1642,11 +1637,11 @@ where
                                             match task_status {
                                                 TaskStatus::Complete => {
                                                     task_complete = true;
+                                                    evaluator_context = None;
                                                 },
                                                 TaskStatus::Incomplete { context } => {
                                                     task_complete = false;
-                                                    // If not complete, store the context for the next loop's prompt
-                                                    last_response_text = context;
+                                                    evaluator_context = Some(context);
                                                 },
                                             }
                                         },
@@ -1659,52 +1654,40 @@ where
 
                                             task_complete = false;
 
-                                            last_response_text = format!(
+                                            evaluator_context = Some(format!(
                                                 "Error parsing task_evaluator result. Raw output: {}",
                                                 tool_call.result
-                                            );
+                                            ));
                                         },
                                     }
                                 } else {
-                                    // Handle other tool calls if necessary, for now just format them
-                                    // If this is the *only* response part, update last_response_text
-                                    if formatted_tool_results.len() == formatted.len() {
-                                        // Check if it's the first/only tool result string being built
-                                        last_response_text = formatted_tool_results.clone();
-                                    } else {
-                                        // Append to existing text/tool results for the final response string
-                                        last_response_text.push_str(&formatted);
-                                    }
+                                    non_evaluator_tool_results.push_str(&tool_call.to_string());
                                 }
                             }
                             let evaluator_incomplete = is_task_evaluator_called && !task_complete;
-                            match &reply_text {
-                                // Text written next to the calls (often the answer itself)
-                                // counts for stop words too.
-                                Some(text) if !evaluator_incomplete => {
-                                    last_response_text =
-                                        format!("{text}\n\n{formatted_tool_results}");
-                                },
-                                // Update last_response_text if it wasn't set by task_evaluator
-                                _ if !is_task_evaluator_called => {
-                                    last_response_text = formatted_tool_results;
-                                },
-                                // An incomplete task_evaluator keeps its context for the next prompt
-                                _ => {},
+                            if !evaluator_incomplete {
+                                match (&reply_text, non_evaluator_tool_results.is_empty()) {
+                                    (Some(text), true) => {
+                                        last_response_text = text.clone();
+                                    },
+                                    (Some(text), false) => {
+                                        last_response_text =
+                                            format!("{text}\n\n{non_evaluator_tool_results}");
+                                    },
+                                    (None, false) => {
+                                        last_response_text = non_evaluator_tool_results;
+                                    },
+                                    (None, true) => {},
+                                }
                             }
                             if let Some(output) = handoff_output {
-                                // The target agent took over and answered; this agent stops.
                                 task_complete = true;
+                                evaluator_context = None;
                                 last_response_text = output;
                             }
-                            // Memory keeps every tool's typed result, including those called
-                            // alongside task_evaluator.
                             assistant_tool_calls = Some(tool_calls);
                         },
                     }
-
-                    // Update the flag for the *next* iteration based on *this* iteration's call
-                    was_prev_call_task_evaluator = is_task_evaluator_called && !task_complete;
 
                     let role = Role::Assistant(self.config.name.to_owned());
                     match assistant_tool_calls {
@@ -1798,12 +1781,7 @@ where
             // TODO: Handle artifacts
 
             // TODO: More flexible output types, e.g. JSON, CSV, etc.
-            let final_result = self
-                .short_memory
-                .0
-                .get(&task)
-                .expect("Task should exist in short memory")
-                .to_string();
+            let final_result = last_response_text;
 
             // Pretty print the final result
             self.print_task_complete(&task, &final_result);

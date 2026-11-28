@@ -217,7 +217,12 @@ async fn tool_results_next_to_task_evaluator_are_kept() {
     let output = agent.run("finish".to_string()).await.unwrap();
     assert_eq!(EVALUATOR_SIBLING_CALLS.load(Ordering::SeqCst), 1);
     assert!(output.contains("sibling result"), "{output}");
-    assert!(output.contains("[Tool name]: task_evaluator"), "{output}");
+    let transcript = agent.conversation("finish").unwrap().to_string();
+    assert!(transcript.contains("sibling result"), "{transcript}");
+    assert!(
+        transcript.contains("[Tool name]: task_evaluator"),
+        "{transcript}"
+    );
 }
 
 #[tokio::test]
@@ -297,4 +302,91 @@ async fn duplicate_tool_names_are_offered_once() {
         1,
         "{names:?}"
     );
+}
+
+#[tokio::test]
+async fn run_returns_only_final_reply_while_conversation_keeps_transcript() {
+    let model = ScriptedModel::new(vec![Ok(vec![AssistantContent::text("Just the answer.")])]);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("CleanAgent")
+        .build();
+
+    let output = agent.run("Explain mutexes".to_string()).await.unwrap();
+    assert_eq!(output, "Just the answer.");
+    assert!(!output.contains("Timestamp(millis):"), "{output}");
+    assert!(!output.contains("User(User):"), "{output}");
+    assert!(!output.contains("Explain mutexes"), "{output}");
+
+    let transcript = agent.conversation("Explain mutexes").unwrap().to_string();
+    assert!(transcript.contains("Explain mutexes"), "{transcript}");
+    assert!(transcript.contains("Just the answer."), "{transcript}");
+}
+
+#[tokio::test]
+async fn run_returns_final_reply_across_multiple_loops_and_evaluator_completion() {
+    let model = ScriptedModel::new(vec![
+        Ok(vec![AssistantContent::text("Completed analysis.")]),
+        Ok(vec![call(
+            "1",
+            "task_evaluator",
+            json!({"status": "Complete"}),
+        )]),
+    ]);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("LoopAgent")
+        .max_loops(3)
+        .build();
+
+    let output = agent.run("Analyze data".to_string()).await.unwrap();
+    assert_eq!(output, "Completed analysis.");
+
+    let conversation = agent.conversation("Analyze data").unwrap();
+    assert!(conversation.to_string().contains("task_evaluator"));
+}
+
+#[tokio::test]
+async fn run_preserves_prior_reply_if_final_loop_evaluator_is_incomplete() {
+    let model = ScriptedModel::new(vec![
+        Ok(vec![AssistantContent::text("Draft answer.")]),
+        Ok(vec![call(
+            "1",
+            "task_evaluator",
+            json!({"status": "Incomplete", "context": "Add more detail"}),
+        )]),
+    ]);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("DraftAgent")
+        .max_loops(2)
+        .build();
+
+    let output = agent.run("Write draft".to_string()).await.unwrap();
+    assert_eq!(output, "Draft answer.");
+}
+
+#[tokio::test]
+async fn sequential_workflow_passes_only_final_reply_between_stages() {
+    use swarms_rs::structs::sequential_workflow::SequentialWorkflow;
+
+    let stage1_model = ScriptedModel::new(vec![Ok(vec![AssistantContent::text("stage 1 facts")])]);
+    let stage2_model =
+        ScriptedModel::new(vec![Ok(vec![AssistantContent::text("stage 2 summary")])]);
+    let stage1 = SwarmsAgentBuilder::new_with_model(stage1_model)
+        .agent_name("Stage1")
+        .build();
+    let stage2 = SwarmsAgentBuilder::new_with_model(stage2_model)
+        .agent_name("Stage2")
+        .build();
+
+    let dir = tempfile::tempdir().unwrap();
+    let workflow = SequentialWorkflow::builder()
+        .name("CleanPipeline")
+        .metadata_output_dir(dir.path().to_string_lossy())
+        .agents(vec![Box::new(stage1), Box::new(stage2)])
+        .build();
+
+    let conversation = workflow.run("original topic").await.unwrap();
+    let stage1_msg = conversation.history[1].content.to_string();
+    assert!(stage1_msg.contains("stage 1 facts"), "{stage1_msg}");
+    assert!(!stage1_msg.contains("User(User):"), "{stage1_msg}");
+    assert!(!stage1_msg.contains("original topic"), "{stage1_msg}");
 }
