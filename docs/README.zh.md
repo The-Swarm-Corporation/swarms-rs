@@ -256,7 +256,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-查看 [mcp_tool.rs](swarms-rs/examples/mcp_tool.rs) 示例以获取完整实现。
+查看 [mcp_tool.rs](../swarms-rs/examples/single_agent/mcp_tool.rs) 示例以获取完整实现。
 
 ## 多智能体架构
 
@@ -367,7 +367,7 @@ async fn main() -> Result<()> {
 
 ## 运行示例
 
-在 [swarms-rs/examples](swarms-rs/examples/) 中有我们的示例代码，可以提供相当程度的参考：
+在 [swarms-rs/examples](../swarms-rs/examples/) 中有我们的示例代码，可以提供相当程度的参考：
 
 要运行图工作流示例：
 
@@ -417,7 +417,7 @@ cargo run --example graph_workflow
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+本项目采用 Apache-2.0 许可证 - 详见 [LICENSE](../LICENSE) 文件。
 
 ## 联系方式
 

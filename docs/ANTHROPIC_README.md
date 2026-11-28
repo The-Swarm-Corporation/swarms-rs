@@ -19,6 +19,7 @@ export ANTHROPIC_BASE_URL="https://api.anthropic.com"
 ```rust
 use swarms_rs::agent::SwarmsAgentBuilder;
 use swarms_rs::llm::provider::anthropic::Anthropic;
+use swarms_rs::structs::agent::Agent;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -101,18 +102,28 @@ let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
 ```rust
 use swarms_rs::agent::SwarmsAgentBuilder;
 use swarms_rs::llm::provider::anthropic::Anthropic;
+use swarms_rs::llm::request::ToolDefinition;
 use swarms_rs::structs::tool::Tool;
 
-// Define a custom tool
+#[derive(Debug)]
 struct CalculatorTool;
 
+#[derive(Debug, serde::Deserialize)]
+struct CalculatorArgs {
+    expression: String,
+}
+
 impl Tool for CalculatorTool {
-    fn name(&self) -> &str { "calculator" }
-    fn definition(&self) -> swarms_rs::llm::request::ToolDefinition {
-        serde_json::json!({
-            "name": "calculator",
-            "description": "Perform mathematical calculations",
-            "parameters": {
+    type Error = std::io::Error;
+    type Args = CalculatorArgs;
+    type Output = String;
+    const NAME: &'static str = "calculator";
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Perform mathematical calculations".to_string(),
+            parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "expression": {
@@ -121,21 +132,15 @@ impl Tool for CalculatorTool {
                     }
                 },
                 "required": ["expression"]
-            }
-        }).into()
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(format!("Evaluated {}", args.expression))
     }
 }
 
-impl swarms_rs::structs::tool::ToolDyn for CalculatorTool {
-    fn call(&self, args: String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, swarms_rs::structs::tool::ToolError>> + Send + '_>> {
-        Box::pin(async move {
-            // Implementation here
-            Ok("42".to_string())
-        })
-    }
-}
-
-// Use with agent
 let agent = SwarmsAgentBuilder::new_with_model(Anthropic::from_env())
     .add_tool(CalculatorTool)
     .system_prompt("You can use the calculator tool for mathematical computations.")
@@ -192,17 +197,18 @@ The provider includes comprehensive error handling:
 
 ### API Errors
 ```rust
+use swarms_rs::llm::CompletionError;
+use swarms_rs::structs::agent::AgentError;
+
 match agent.run(task).await {
     Ok(response) => println!("Success: {}", response),
-    Err(e) => match e {
-        swarms_rs::structs::agent::AgentError::ProviderError(msg) => {
-            println!("Anthropic API error: {}", msg);
-        }
-        swarms_rs::structs::agent::AgentError::HttpError(_) => {
-            println!("Network error - check your connection");
-        }
-        _ => println!("Other error: {}", e),
+    Err(AgentError::CompletionError(CompletionError::Provider(msg))) => {
+        println!("Anthropic API error: {}", msg);
     }
+    Err(AgentError::CompletionError(CompletionError::Http(_))) => {
+        println!("Network error - check your connection");
+    }
+    Err(e) => println!("Other error: {}", e),
 }
 ```
 
@@ -299,7 +305,7 @@ async fn health_check() -> Result<(), Box<dyn std::error::Error>> {
 - [Anthropic API Documentation](https://docs.anthropic.com/)
 - [Claude Model Comparison](https://docs.anthropic.com/claude/docs/models-overview)
 - [Swarms-RS Documentation](../README.md)
-- [Tool Integration Guide](./TOOL_INTEGRATION.md)
+- [Tool Example](../swarms-rs/examples/single_agent/tool.rs)
 
 ## 🤝 Contributing
 
