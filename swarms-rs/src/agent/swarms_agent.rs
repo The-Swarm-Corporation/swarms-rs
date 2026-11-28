@@ -726,6 +726,12 @@ where
             .fold(self, |builder, stop_word| builder.add_stop_word(stop_word))
     }
 
+    /// Attach the built-in `task_evaluator` tool so the model can evaluate multi-loop progress.
+    pub fn enable_task_evaluator(mut self) -> Self {
+        self.config.task_evaluator_tool_enabled = true;
+        self
+    }
+
     pub fn disable_task_complete_tool(mut self) -> Self {
         self.config.task_evaluator_tool_enabled = false;
         self

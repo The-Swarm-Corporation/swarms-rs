@@ -211,6 +211,7 @@ async fn tool_results_next_to_task_evaluator_are_kept() {
     ])]);
     let agent = SwarmsAgentBuilder::new_with_model(model)
         .add_tool(EvaluatorSibling)
+        .enable_task_evaluator()
         .max_loops(3)
         .build();
 
@@ -283,6 +284,7 @@ async fn duplicate_tool_names_are_offered_once() {
     let agent = SwarmsAgentBuilder::new_with_model(model)
         .add_tool(SequentialOk)
         .add_tool(SequentialOk)
+        .enable_task_evaluator()
         .build();
 
     agent.run("hello".to_string()).await.unwrap();
@@ -297,4 +299,49 @@ async fn duplicate_tool_names_are_offered_once() {
         1,
         "{names:?}"
     );
+}
+
+#[tokio::test]
+async fn default_agent_does_not_attach_task_evaluator() {
+    let model = ScriptedModel::new(vec![]);
+    let tool_names = Arc::clone(&model.tool_names);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .max_loops(3)
+        .build();
+
+    agent.run("hello".to_string()).await.unwrap();
+    let names = tool_names.lock().unwrap();
+    assert!(names.is_empty(), "{names:?}");
+}
+
+#[tokio::test]
+async fn enable_task_evaluator_is_opt_in_and_disable_stays_compatible() {
+    let model = ScriptedModel::new(vec![Ok(vec![call(
+        "1",
+        "task_evaluator",
+        json!({"status": "Complete"}),
+    )])]);
+    let calls = Arc::clone(&model.calls);
+    let tool_names = Arc::clone(&model.tool_names);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .enable_task_evaluator()
+        .max_loops(3)
+        .build();
+
+    agent.run("finish early".to_string()).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        tool_names.lock().unwrap().as_slice(),
+        &["task_evaluator".to_string()]
+    );
+
+    let disabled_model = ScriptedModel::new(vec![]);
+    let disabled_tools = Arc::clone(&disabled_model.tool_names);
+    let disabled_agent = SwarmsAgentBuilder::new_with_model(disabled_model)
+        .enable_task_evaluator()
+        .disable_task_complete_tool()
+        .build();
+
+    disabled_agent.run("hello".to_string()).await.unwrap();
+    assert!(disabled_tools.lock().unwrap().is_empty());
 }

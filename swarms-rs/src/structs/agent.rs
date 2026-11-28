@@ -126,6 +126,11 @@ impl AgentConfigBuilder {
         self
     }
 
+    pub fn enable_task_evaluator(mut self) -> Self {
+        Arc::make_mut(&mut self.config).task_evaluator_tool_enabled = true;
+        self
+    }
+
     pub fn build(self) -> Arc<AgentConfig> {
         let config = &self.config;
         if config.verbose {
@@ -237,7 +242,7 @@ impl Default for AgentConfig {
             rag_every_loop: false,
             save_state_dir: None,
             stop_words: HashSet::with_capacity(16), // Pre-allocate capacity
-            task_evaluator_tool_enabled: true,
+            task_evaluator_tool_enabled: false,
             concurrent_tool_call_enabled: true,
             verbose: false,                              // Default to verbose logging
             pretty_print_on: false,                      // Default to no pretty printing
