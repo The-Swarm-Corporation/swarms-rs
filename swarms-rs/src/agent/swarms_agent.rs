@@ -948,7 +948,7 @@ where
 
             println!("{}", build_panel(&title, &rows));
         } else {
-            println!("🤖 Agent: {}", content);
+            tracing::debug!(agent = %self.config.name, output = %content, "Agent output");
         }
     }
 
@@ -964,8 +964,13 @@ where
 
             println!("{}", build_panel(&title, &rows));
         } else {
-            println!("🔧 Tool {} executed with args: {}", tool_name, args);
-            println!("✅ Result: {}", result);
+            tracing::debug!(
+                agent = %self.config.name,
+                tool = %tool_name,
+                args = %args,
+                result = %result,
+                "Tool executed"
+            );
         }
     }
 
@@ -983,8 +988,12 @@ where
 
             println!("{}", build_panel(&title, &rows));
         } else {
-            println!("🎯 Task '{}' completed!", task);
-            println!("📋 Result: {}", result);
+            tracing::debug!(
+                agent = %self.config.name,
+                task = %task,
+                result = %result,
+                "Task completed"
+            );
         }
     }
 
