@@ -298,3 +298,183 @@ async fn duplicate_tool_names_are_offered_once() {
         "{names:?}"
     );
 }
+
+#[tool(description = "Returns a fixed sentinel value")]
+fn stdout_probe_tool() -> Result<String, TestError> {
+    Ok("stdout-probe-tool-result".to_string())
+}
+
+async fn run_stdout_probe(mode: &str) {
+    let model = ScriptedModel::new(vec![Ok(vec![
+        AssistantContent::text("stdout-probe-reply"),
+        call("1", "stdout_probe_tool", json!({})),
+    ])]);
+    let mut builder = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("ProbeAgent")
+        .add_tool(StdoutProbeTool);
+    match mode {
+        "default" => {},
+        "verbose_only" => {
+            builder = builder.verbose(true);
+        },
+        "pretty" => {
+            builder = builder.pretty_print_on(true);
+        },
+        other => panic!("unexpected stdout probe mode: {other}"),
+    }
+    let agent = builder.build();
+    agent.run("stdout-probe-task".to_string()).await.unwrap();
+}
+
+#[tokio::test]
+async fn stdout_behavior_matches_pretty_print_flag() {
+    if let Ok(mode) = std::env::var("SWARMS_TEST_STDOUT_MODE") {
+        run_stdout_probe(&mode).await;
+        return;
+    }
+
+    let exe = std::env::current_exe().expect("current test binary path");
+
+    for mode in ["default", "verbose_only"] {
+        let output = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "stdout_behavior_matches_pretty_print_flag",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("SWARMS_TEST_STDOUT_MODE", mode)
+            .output()
+            .expect("spawn stdout probe");
+        assert!(output.status.success(), "mode={mode} failed: {output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for forbidden in [
+            "stdout-probe-reply",
+            "stdout_probe_tool",
+            "stdout-probe-tool-result",
+            "stdout-probe-task",
+            "🤖",
+            "🔧",
+            "✅",
+            "🎯",
+            "📋",
+            "╭",
+        ] {
+            assert!(
+                !stdout.contains(forbidden),
+                "mode={mode} unexpectedly printed '{forbidden}' to stdout:\n{stdout}"
+            );
+        }
+    }
+
+    let pretty = std::process::Command::new(&exe)
+        .args([
+            "--exact",
+            "stdout_behavior_matches_pretty_print_flag",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("SWARMS_TEST_STDOUT_MODE", "pretty")
+        .output()
+        .expect("spawn pretty stdout probe");
+    assert!(pretty.status.success(), "pretty mode failed: {pretty:?}");
+    let pretty_stdout = String::from_utf8_lossy(&pretty.stdout);
+    for expected in [
+        "╭",
+        "ProbeAgent Output",
+        "stdout-probe-reply",
+        "Tool Execution",
+        "stdout_probe_tool",
+        "stdout-probe-tool-result",
+        "Task Completed",
+        "stdout-probe-task",
+    ] {
+        assert!(
+            pretty_stdout.contains(expected),
+            "pretty mode missing '{expected}' in stdout:\n{pretty_stdout}"
+        );
+    }
+}
+
+#[derive(Clone, Default)]
+struct SharedBufferWriter {
+    buf: Arc<Mutex<Vec<u8>>>,
+}
+
+impl std::io::Write for SharedBufferWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.buf.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedBufferWriter {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn non_pretty_output_routes_to_debug_tracing() {
+    if std::env::var_os("SWARMS_TEST_TRACING_PROBE").is_none() {
+        let exe = std::env::current_exe().expect("current test binary path");
+        let output = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "non_pretty_output_routes_to_debug_tracing",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("SWARMS_TEST_TRACING_PROBE", "1")
+            .output()
+            .expect("spawn tracing probe");
+        assert!(
+            output.status.success(),
+            "tracing probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let writer = SharedBufferWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .with_writer(writer.clone())
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("set global tracing subscriber");
+
+    let model = ScriptedModel::new(vec![Ok(vec![
+        AssistantContent::text("stdout-probe-reply"),
+        call("1", "stdout_probe_tool", json!({})),
+    ])]);
+    let agent = SwarmsAgentBuilder::new_with_model(model)
+        .agent_name("TraceAgent")
+        .add_tool(StdoutProbeTool)
+        .build();
+
+    agent.run("stdout-probe-task".to_string()).await.unwrap();
+
+    let logs = String::from_utf8(writer.buf.lock().unwrap().clone()).unwrap();
+    for expected in [
+        "Agent output",
+        "stdout-probe-reply",
+        "Tool executed",
+        "stdout_probe_tool",
+        "stdout-probe-tool-result",
+        "Task completed",
+        "stdout-probe-task",
+    ] {
+        assert!(
+            logs.contains(expected),
+            "debug tracing missing '{expected}':\n{logs}"
+        );
+    }
+}
